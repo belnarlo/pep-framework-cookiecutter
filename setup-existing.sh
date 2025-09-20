@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-TEMPLATE_REPO="https://github.com/your-org/pep-framework-cookiecutter.git"
+TEMPLATE_REPO="https://github.com/belnarlo/pep-framework-cookiecutter.git"
 TEMP_DIR=$(mktemp -d)
 
 log() {
