@@ -1,0 +1,34 @@
+{
+    "project_name": "My Project",
+    "project_slug": "{{ cookiecutter.project_name.lower().replace(' ', '-').replace('_', '-') }}",
+    "author_name": "Your Name",
+    "author_email": "your.email@example.com",
+    "project_description": "A brief description of your project",
+    "use_git_hooks": "y",
+    "require_pep_reference": "n",
+    "zabbix_host": "",
+    "grafana_url": "",
+    "slack_webhook": "",
+    "enable_email_notifications": "n",
+    "default_editor": [
+        "vi",
+        "vim",
+        "nano",
+        "code",
+        "emacs"
+    ],
+    "project_type": [
+        "infrastructure",
+        "software",
+        "homelab",
+        "monitoring",
+        "automation",
+        "general"
+    ],
+    "_copy_without_render": [
+        "*.sh"
+    ],
+    "_extensions": [
+        "cookiecutter.extensions.JsonifyExtension"
+    ]
+}
