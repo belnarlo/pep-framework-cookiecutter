@@ -98,40 +98,53 @@ get_next_blog_number() {
 create_pep() {
     local pep_num=""
     local title=""
+    local open_code=false
     
-    # Parse arguments intelligently
-    if [ $# -eq 0 ]; then
+    # Check for --code flag and remove it from arguments
+    local args=()
+    for arg in "$@"; do
+        if [ "$arg" = "--code" ]; then
+            open_code=true
+        else
+            args+=("$arg")
+        fi
+    done
+    
+    # Parse remaining arguments intelligently
+    local argc=${#args[@]}
+    
+    if [ $argc -eq 0 ]; then
         # No arguments - prompt for title and auto-number
         pep_num=$(get_next_pep_number)
         log "INFO" "Auto-assigned PEP number: $pep_num"
         echo -n "Enter PEP title: "
         read -r title
-    elif [ $# -eq 1 ]; then
+    elif [ $argc -eq 1 ]; then
         # One argument - check if it's a number or title
-        if [[ "$1" =~ ^[0-9]+$ ]]; then
+        if [[ "${args[0]}" =~ ^[0-9]+$ ]]; then
             # It's a number, prompt for title
-            pep_num="$1"
+            pep_num="${args[0]}"
             echo -n "Enter PEP title: "
             read -r title
         else
             # It's a title, auto-assign number
-            title="$1"
+            title="${args[0]}"
             pep_num=$(get_next_pep_number)
             log "INFO" "Auto-assigned PEP number: $pep_num"
         fi
-    elif [ $# -eq 2 ]; then
+    elif [ $argc -eq 2 ]; then
         # Two arguments - first should be number, second title
-        if [[ "$1" =~ ^[0-9]+$ ]]; then
-            pep_num="$1"
-            title="$2"
+        if [[ "${args[0]}" =~ ^[0-9]+$ ]]; then
+            pep_num="${args[0]}"
+            title="${args[1]}"
         else
             log "ERROR" "When providing two arguments, first must be a number"
-            log "INFO" "Usage: $0 new-pep [number] [title]"
+            log "INFO" "Usage: $0 new-pep [--code] [number] [title]"
             exit 1
         fi
     else
         log "ERROR" "Too many arguments"
-        log "INFO" "Usage: $0 new-pep [number] [title]"
+        log "INFO" "Usage: $0 new-pep [--code] [number] [title]"
         exit 1
     fi
     
@@ -140,7 +153,7 @@ create_pep() {
         exit 1
     fi
     
-    # Create slug from title
+    # Create slug from title (more robust)
     local slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
     local filename="${PEP_DIR}/pep-$(printf "%03d" "$pep_num")-${slug}.md"
     
@@ -164,16 +177,33 @@ create_pep() {
     local author="${PEP_AUTHOR:-$(git config user.name 2>/dev/null || echo 'Unknown Author')}"
     local today=$(date +%Y-%m-%d)
     
-    sed -i "s/XXX/$(printf "%03d" "$pep_num")/g" "$filename"
-    sed -i "s/\[Title\]/$title/g" "$filename"
-    sed -i "s/YYYY-MM-DD/$today/g" "$filename"
-    sed -i "s/\[Your Name\]/$author/g" "$filename"
+    # Use different delimiter for sed to avoid conflicts with slashes and spaces
+    sed -i.bak "s|XXX|$(printf "%03d" "$pep_num")|g" "$filename"
+    sed -i.bak "s|\[Title\]|$title|g" "$filename"
+    sed -i.bak "s|YYYY-MM-DD|$today|g" "$filename"
+    sed -i.bak "s|\[Your Name\]|$author|g" "$filename"
+    
+    # Remove backup files
+    rm -f "$filename.bak"
     
     log "INFO" "Created PEP-$(printf "%03d" "$pep_num"): $filename"
     
-    if command -v "${EDITOR:-vi}" >/dev/null 2>&1; then
+    # Handle editor opening based on flags and configuration
+    if [ "$open_code" = true ]; then
+        if command -v code >/dev/null 2>&1; then
+            log "INFO" "Opening in VS Code..."
+            code "$filename"
+        else
+            log "WARN" "VS Code not found, please install 'code' command"
+            log "INFO" "Edit with: code $filename"
+        fi
+    elif [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${EDITOR:-vi}" >/dev/null 2>&1; then
         log "INFO" "Opening in ${EDITOR:-vi}..."
         "${EDITOR:-vi}" "$filename"
+    else
+        log "INFO" "Edit with: code $filename"
+        log "INFO" "Or use: $0 new-pep --code 'Title' to open in VS Code"
+        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc to auto-open"
     fi
 }
 
@@ -226,8 +256,12 @@ create_blog() {
     
     log "INFO" "Created BLOG-$(printf "%03d" "$blog_num"): $filename"
     
-    if command -v "${EDITOR:-vi}" >/dev/null 2>&1; then
+    # Only open editor if explicitly configured to do so
+    if [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${EDITOR:-vi}" >/dev/null 2>&1; then
         "${EDITOR:-vi}" "$filename"
+    else
+        log "INFO" "Edit with: code $filename"
+        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc to auto-open"
     fi
 }
 
@@ -409,7 +443,8 @@ main() {
             init_framework
             ;;
         "new-pep")
-            create_pep "$2" "$3"
+            shift  # Remove 'new-pep' from arguments
+            create_pep "$@"  # Pass all remaining arguments
             ;;
         "new-blog")
             create_blog "$2" "$3"

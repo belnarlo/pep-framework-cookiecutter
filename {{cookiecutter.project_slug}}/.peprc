@@ -32,6 +32,6 @@ EMAIL_NOTIFICATIONS="false"
 DEBUG="false"
 
 # Template customization
-# Uncomment to override default template behavior
-# AUTO_OPEN_EDITOR="true"
+# Set to true to automatically open editor after creating PEP/BLOG
+AUTO_OPEN_EDITOR="false"
 # CREATE_GIT_BRANCH="false"
