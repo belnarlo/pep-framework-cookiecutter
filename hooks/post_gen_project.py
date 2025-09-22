@@ -36,6 +36,9 @@ def setup_permissions():
             run_command(f"chmod +x {script}", f"Made {description} executable")
         else:
             print(f"⚠ {script} not found, skipping")
+    
+    # Also fix any other shell scripts
+    run_command("find . -name '*.sh' -type f -exec chmod +x {} +", "Made all .sh files executable", fail_ok=True)
 
 def setup_git():
     """Initialize git repository if needed."""

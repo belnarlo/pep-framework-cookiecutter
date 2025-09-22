@@ -96,21 +96,43 @@ get_next_blog_number() {
 
 # Create a new PEP
 create_pep() {
-    local pep_num="$1"
-    local title="$2"
+    local pep_num=""
+    local title=""
     
-    if [ -z "$title" ]; then
-        if [ -z "$pep_num" ]; then
+    # Parse arguments intelligently
+    if [ $# -eq 0 ]; then
+        # No arguments - prompt for title and auto-number
+        pep_num=$(get_next_pep_number)
+        log "INFO" "Auto-assigned PEP number: $pep_num"
+        echo -n "Enter PEP title: "
+        read -r title
+    elif [ $# -eq 1 ]; then
+        # One argument - check if it's a number or title
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+            # It's a number, prompt for title
+            pep_num="$1"
+            echo -n "Enter PEP title: "
+            read -r title
+        else
+            # It's a title, auto-assign number
+            title="$1"
             pep_num=$(get_next_pep_number)
             log "INFO" "Auto-assigned PEP number: $pep_num"
         fi
-        echo -n "Enter PEP title: "
-        read -r title
-    fi
-    
-    if [ -z "$pep_num" ]; then
-        pep_num=$(get_next_pep_number)
-        log "INFO" "Auto-assigned PEP number: $pep_num"
+    elif [ $# -eq 2 ]; then
+        # Two arguments - first should be number, second title
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+            pep_num="$1"
+            title="$2"
+        else
+            log "ERROR" "When providing two arguments, first must be a number"
+            log "INFO" "Usage: $0 new-pep [number] [title]"
+            exit 1
+        fi
+    else
+        log "ERROR" "Too many arguments"
+        log "INFO" "Usage: $0 new-pep [number] [title]"
+        exit 1
     fi
     
     if [ -z "$title" ]; then
