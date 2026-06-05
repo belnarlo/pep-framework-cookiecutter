@@ -1,14 +1,15 @@
-# PEP-XXX: [Title]
+# PEPID: [Title]
 
-**PEP:** XXX  
+**ID:** PEPID  
 **Title:** [Title]  
 **Author:** [Your Name]  
 **Status:** Draft  
-**Type:** Project | Feature | Process | Infrastructure  
+**Type:** [Type]  
+**Priority:** [Priority]  
 **Created:** YYYY-MM-DD  
 **Updated:** YYYY-MM-DD  
-**Supersedes:** PEP-XXX (if applicable)  
-**Superseded-By:** PEP-XXX (if applicable)  
+**Supersedes:** PEPID (if applicable)  
+**Superseded-By:** PEPID (if applicable)  
 
 ## Abstract
 
@@ -56,7 +57,7 @@ Why is this change needed? What problem does it solve?
 ### Context for AI Assistance
 
 ```
-You are helping implement PEP-XXX: [Title]. 
+You are helping implement PEPID: [Title]. 
 Key requirements: [list key requirements]
 Technology stack: [relevant technologies]
 Constraints: [any limitations]

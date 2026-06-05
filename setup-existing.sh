@@ -107,6 +107,9 @@ get_user_input() {
         DEFAULT_EDITOR="vi"
         USE_GIT_HOOKS="y"
         REQUIRE_PEP_REFERENCE="n"
+        PROJECT_CODE=""
+        REPO_CODE=""
+        ENABLE_BLOGS="y"
         ZABBIX_HOST=""
         GRAFANA_URL=""
         return
@@ -177,9 +180,28 @@ get_user_input() {
     read -r REQUIRE_PEP_REFERENCE
     REQUIRE_PEP_REFERENCE=${REQUIRE_PEP_REFERENCE:-n}
     
+    echo ""
+    echo "PEP identifier codes (used to build IDs like PROJECT_CODE-REPO_CODE-001):"
+    echo "  Leave blank to use the default 'PEP' prefix (e.g. PEP-001)"
+    echo -n "Project code (short uppercase, e.g. 'PE' for Platform Engineering) [none]: "
+    read -r PROJECT_CODE
+    PROJECT_CODE=$(echo "$PROJECT_CODE" | tr '[:lower:]' '[:upper:]')
+
+    echo -n "Repository code (short uppercase, e.g. 'MON' for monitoring) [none]: "
+    read -r REPO_CODE
+    REPO_CODE=$(echo "$REPO_CODE" | tr '[:lower:]' '[:upper:]')
+
+    echo -n "Enable blogs (Build Logs) feature? [Y/n]: "
+    read -r enable_blogs_choice
+    if [[ "${enable_blogs_choice,,}" =~ ^n ]]; then
+        ENABLE_BLOGS="n"
+    else
+        ENABLE_BLOGS="y"
+    fi
+
     echo -n "Zabbix host (optional): "
     read -r ZABBIX_HOST
-    
+
     echo -n "Grafana URL (optional): "
     read -r GRAFANA_URL
 }
@@ -457,7 +479,9 @@ create_framework_manually() {
     cat > .peprc << EOF
 # PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$PROJECT_NAME"
-PROJECT_TYPE="$PROJECT_TYPE"
+PROJECT_CODE="$PROJECT_CODE"
+REPO_CODE="$REPO_CODE"
+ENABLE_BLOGS="$ENABLE_BLOGS"
 ZABBIX_HOST="$ZABBIX_HOST"
 GRAFANA_URL="$GRAFANA_URL"
 REQUIRE_PEP_REFERENCE=$([ "$REQUIRE_PEP_REFERENCE" = "y" ] && echo "true" || echo "false")
@@ -683,6 +707,9 @@ install_framework() {
     # Customise .peprc with project-level settings
     if [ -f ".peprc" ]; then
         sed -i.bak "s/PROJECT_NAME=.*/PROJECT_NAME=\"$PROJECT_NAME\"/" .peprc
+        sed -i.bak "s/PROJECT_CODE=.*/PROJECT_CODE=\"$PROJECT_CODE\"/" .peprc
+        sed -i.bak "s/REPO_CODE=.*/REPO_CODE=\"$REPO_CODE\"/" .peprc
+        sed -i.bak "s/ENABLE_BLOGS=.*/ENABLE_BLOGS=\"$ENABLE_BLOGS\"/" .peprc
         sed -i.bak "s/ZABBIX_HOST=.*/ZABBIX_HOST=\"$ZABBIX_HOST\"/" .peprc
         sed -i.bak "s|GRAFANA_URL=.*|GRAFANA_URL=\"$GRAFANA_URL\"|" .peprc
         sed -i.bak "s/REQUIRE_PEP_REFERENCE=.*/REQUIRE_PEP_REFERENCE=$([ "$REQUIRE_PEP_REFERENCE" = "y" ] && echo "true" || echo "false")/" .peprc
@@ -693,6 +720,9 @@ install_framework() {
         cat > .peprc << EOF
 # PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$PROJECT_NAME"
+PROJECT_CODE="$PROJECT_CODE"
+REPO_CODE="$REPO_CODE"
+ENABLE_BLOGS="$ENABLE_BLOGS"
 ZABBIX_HOST="$ZABBIX_HOST"
 GRAFANA_URL="$GRAFANA_URL"
 REQUIRE_PEP_REFERENCE=$([ "$REQUIRE_PEP_REFERENCE" = "y" ] && echo "true" || echo "false")

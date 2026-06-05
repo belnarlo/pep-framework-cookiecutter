@@ -1,6 +1,6 @@
 #!/bin/bash
 # PEP Management Tools
-# Version: 1.0
+# Version: 2.0
 # Description: Command-line tools for managing Project Enhancement Packages
 
 set -e
@@ -31,8 +31,7 @@ log() {
     local level="$1"
     shift
     local message="$*"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
+
     case "$level" in
         "INFO")
             echo -e "${GREEN}[INFO]${NC} $message"
@@ -51,9 +50,65 @@ log() {
     esac
 }
 
+# Returns the lowercase file prefix used in filenames (e.g. "pep-pe-mon-" or "pep-")
+# Filenames: pep-pe-mon-001-feat-slug.md  /  pep-001-feat-slug.md
+get_file_prefix() {
+    local project="${PROJECT_CODE:-}"
+    local repo="${REPO_CODE:-}"
+
+    if [ -n "$project" ] && [ -n "$repo" ]; then
+        echo "pep-$(echo "${project}-${repo}" | tr '[:upper:]' '[:lower:]')-"
+    elif [ -n "$repo" ]; then
+        echo "pep-$(echo "$repo" | tr '[:upper:]' '[:lower:]')-"
+    elif [ -n "$project" ]; then
+        echo "pep-$(echo "$project" | tr '[:upper:]' '[:lower:]')-"
+    else
+        echo "pep-"
+    fi
+}
+
+# Returns the display ID used in file content, list, and commit messages
+# e.g. "PE-MON-PEP-001"  /  "PEP-001"
+get_pep_id() {
+    local num="$1"
+    local project="${PROJECT_CODE:-}"
+    local repo="${REPO_CODE:-}"
+
+    if [ -n "$project" ] && [ -n "$repo" ]; then
+        printf "%s-%s-PEP-%03d" "$project" "$repo" "$((10#$num))"
+    elif [ -n "$repo" ]; then
+        printf "%s-PEP-%03d" "$repo" "$((10#$num))"
+    elif [ -n "$project" ]; then
+        printf "%s-PEP-%03d" "$project" "$((10#$num))"
+    else
+        printf "PEP-%03d" "$((10#$num))"
+    fi
+}
+
+# Maps a PEP type name to a short slug used in filenames
+get_type_slug() {
+    case "$1" in
+        "Project")        echo "proj" ;;
+        "Feature")        echo "feat" ;;
+        "Process")        echo "proc" ;;
+        "Infrastructure") echo "infra" ;;
+        "Documentation")  echo "docs" ;;
+        "Bug")            echo "bug" ;;
+        "Enhancement")    echo "enh" ;;
+        "Research")       echo "research" ;;
+        "Security")       echo "sec" ;;
+        "Performance")    echo "perf" ;;
+        *)                echo "$(echo "$1" | tr '[:upper:]' '[:lower:]' | cut -c1-8)" ;;
+    esac
+}
+
 # Ensure required directories exist
 ensure_directories() {
-    for dir in "$PEP_DIR" "$BLOG_DIR" "$TEMPLATE_DIR" "tools/git-hooks"; do
+    local dirs=("$PEP_DIR" "$TEMPLATE_DIR" "tools/git-hooks")
+    if [ "${ENABLE_BLOGS:-y}" = "y" ]; then
+        dirs+=("$BLOG_DIR")
+    fi
+    for dir in "${dirs[@]}"; do
         if [ ! -d "$dir" ]; then
             mkdir -p "$dir"
             log "INFO" "Created directory: $dir"
@@ -61,39 +116,39 @@ ensure_directories() {
     done
 }
 
-# Get next available PEP number
+# Get next available PEP number (extracts the first 3-digit group from each filename)
 get_next_pep_number() {
     local max_num=0
-    
-    if [ -d "$PEP_DIR" ] && [ "$(ls -A $PEP_DIR/pep-*.md 2>/dev/null)" ]; then
-        for pep in $PEP_DIR/pep-*.md; do
-            if [ -f "$pep" ]; then
-                local num=$(basename "$pep" | sed 's/pep-\([0-9]*\)-.*/\1/' | sed 's/^0*//')
-                if [ "$num" -gt "$max_num" ]; then
-                    max_num="$num"
-                fi
+
+    if [ -d "$PEP_DIR" ]; then
+        for pep in "$PEP_DIR"/pep-*.md; do
+            [ -f "$pep" ] || continue
+            local num
+            num=$(basename "$pep" | grep -oE '[0-9]{3}' | head -1 | sed 's/^0*//')
+            if [ -n "$num" ] && [ "$num" -gt "$max_num" ] 2>/dev/null; then
+                max_num="$num"
             fi
         done
     fi
-    
+
     echo $((max_num + 1))
 }
 
 # Get next available BLOG number
 get_next_blog_number() {
     local max_num=0
-    
-    if [ -d "$BLOG_DIR" ] && [ "$(ls -A $BLOG_DIR/blog-*.md 2>/dev/null)" ]; then
-        for blog in $BLOG_DIR/blog-*.md; do
-            if [ -f "$blog" ]; then
-                local num=$(basename "$blog" | sed 's/blog-\([0-9]*\)-.*/\1/' | sed 's/^0*//')
-                if [ "$num" -gt "$max_num" ]; then
-                    max_num="$num"
-                fi
+
+    if [ -d "$BLOG_DIR" ]; then
+        for blog in "$BLOG_DIR"/blog-*.md; do
+            [ -f "$blog" ] || continue
+            local num
+            num=$(basename "$blog" | grep -oE '[0-9]{3}' | head -1 | sed 's/^0*//')
+            if [ -n "$num" ] && [ "$num" -gt "$max_num" ] 2>/dev/null; then
+                max_num="$num"
             fi
         done
     fi
-    
+
     echo $((max_num + 1))
 }
 
@@ -102,8 +157,7 @@ create_pep() {
     local pep_num=""
     local title=""
     local open_code=false
-    
-    # Check for --code flag and remove it from arguments
+
     local args=()
     for arg in "$@"; do
         if [ "$arg" = "--code" ]; then
@@ -112,31 +166,25 @@ create_pep() {
             args+=("$arg")
         fi
     done
-    
-    # Parse remaining arguments intelligently
+
     local argc=${#args[@]}
-    
+
     if [ $argc -eq 0 ]; then
-        # No arguments - prompt for title and auto-number
         pep_num=$(get_next_pep_number)
         log "INFO" "Auto-assigned PEP number: $pep_num"
         echo -n "Enter PEP title: "
         read -r title
     elif [ $argc -eq 1 ]; then
-        # One argument - check if it's a number or title
         if [[ "${args[0]}" =~ ^[0-9]+$ ]]; then
-            # It's a number, prompt for title
             pep_num="${args[0]}"
             echo -n "Enter PEP title: "
             read -r title
         else
-            # It's a title, auto-assign number
             title="${args[0]}"
             pep_num=$(get_next_pep_number)
             log "INFO" "Auto-assigned PEP number: $pep_num"
         fi
     elif [ $argc -eq 2 ]; then
-        # Two arguments - first should be number, second title
         if [[ "${args[0]}" =~ ^[0-9]+$ ]]; then
             pep_num="${args[0]}"
             title="${args[1]}"
@@ -150,121 +198,432 @@ create_pep() {
         log "INFO" "Usage: $0 new-pep [--code] [number] [title]"
         exit 1
     fi
-    
+
     if [ -z "$title" ]; then
         log "ERROR" "Title is required"
         exit 1
     fi
-    
-    # Create slug from title (more robust)
-    local slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
-    local filename="${PEP_DIR}/pep-$(printf "%03d" "$pep_num")-${slug}.md"
-    
+
+    # Prompt for type
+    local pep_types=("Project" "Feature" "Process" "Infrastructure" "Documentation" "Bug" "Enhancement" "Research" "Security" "Performance")
+    echo ""
+    echo "Select PEP type:"
+    for i in "${!pep_types[@]}"; do
+        printf "  %2d) %s\n" "$((i+1))" "${pep_types[$i]}"
+    done
+    echo -n "Type [1-${#pep_types[@]}, default 2 (Feature)]: "
+    read -r type_choice
+    local pep_type
+    if [[ "$type_choice" =~ ^[0-9]+$ ]] && [ "$type_choice" -ge 1 ] && [ "$type_choice" -le "${#pep_types[@]}" ]; then
+        pep_type="${pep_types[$((type_choice-1))]}"
+    else
+        pep_type="Feature"
+        log "INFO" "Defaulting to type: $pep_type"
+    fi
+
+    # Prompt for priority
+    echo -n "Priority [H)igh / M)edium / L)ow, default M]: "
+    read -r priority_choice
+    local pep_priority
+    case "${priority_choice,,}" in
+        h|high) pep_priority="High" ;;
+        l|low)  pep_priority="Low" ;;
+        *)      pep_priority="Medium" ;;
+    esac
+
+    # Prompt for abstract
+    echo -n "Brief abstract (2-3 sentences): "
+    read -r pep_abstract
+
+    # Build filename: {prefix}{num}-{typeslug}-{titleslug}.md
+    local type_slug
+    type_slug=$(get_type_slug "$pep_type")
+    local title_slug
+    title_slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
+    local file_prefix
+    file_prefix=$(get_file_prefix)
+    local filename="${PEP_DIR}/${file_prefix}$(printf "%03d" "$pep_num")-${type_slug}-${title_slug}.md"
+
     if [ -f "$filename" ]; then
         log "ERROR" "PEP $pep_num already exists: $filename"
         exit 1
     fi
-    
+
     ensure_directories
-    
+
     if [ ! -f "${TEMPLATE_DIR}/pep-template.md" ]; then
         log "ERROR" "PEP template not found: ${TEMPLATE_DIR}/pep-template.md"
-        log "INFO" "Run '$0 init' to create templates"
+        log "INFO" "Run '$0 update-templates' to pull templates from source"
         exit 1
     fi
-    
-    # Copy template and replace placeholders
+
     cp "${TEMPLATE_DIR}/pep-template.md" "$filename"
-    
-    # Replace placeholders
+
     local author="${PEP_AUTHOR:-$(git config user.name 2>/dev/null || echo 'Unknown Author')}"
-    local today=$(date +%Y-%m-%d)
-    
-    # Use different delimiter for sed to avoid conflicts with slashes and spaces
-    sed -i.bak "s|XXX|$(printf "%03d" "$pep_num")|g" "$filename"
+    local today
+    today=$(date +%Y-%m-%d)
+    local pep_id
+    pep_id=$(get_pep_id "$pep_num")
+
+    sed -i.bak "s|PEPID|$pep_id|g" "$filename"
     sed -i.bak "s|\[Title\]|$title|g" "$filename"
     sed -i.bak "s|YYYY-MM-DD|$today|g" "$filename"
     sed -i.bak "s|\[Your Name\]|$author|g" "$filename"
-    
-    # Remove backup files
+    sed -i.bak "s|\[Type\]|$pep_type|g" "$filename"
+    sed -i.bak "s|\[Priority\]|$pep_priority|g" "$filename"
+    if [ -n "$pep_abstract" ]; then
+        sed -i.bak "s|Brief summary of the enhancement (2-3 sentences).|$pep_abstract|" "$filename"
+    fi
+
     rm -f "$filename.bak"
-    
-    log "INFO" "Created PEP-$(printf "%03d" "$pep_num"): $filename"
-    
-    # Handle editor opening based on flags and configuration
+
+    log "INFO" "Created $pep_id: $filename"
+
     if [ "$open_code" = true ]; then
         if command -v code >/dev/null 2>&1; then
             log "INFO" "Opening in VS Code..."
             code "$filename"
         else
-            log "WARN" "VS Code not found, please install 'code' command"
+            log "WARN" "VS Code not found"
             log "INFO" "Edit with: code $filename"
         fi
     elif [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${DEFAULT_EDITOR:-vi}" >/dev/null 2>&1; then
         log "INFO" "Opening in ${DEFAULT_EDITOR:-vi}..."
         "${DEFAULT_EDITOR:-vi}" "$filename"
     else
-        log "INFO" "Edit with: code $filename"
-        log "INFO" "Or use: $0 new-pep --code 'Title' to open in VS Code"
-        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc.local to auto-open"
+        log "INFO" "Edit with: ${DEFAULT_EDITOR:-code} $filename"
+        log "INFO" "Create branch when ready: $0 new-branch $pep_num"
+    fi
+}
+
+# Create a git feature branch for a PEP
+new_branch() {
+    local pep_ref="${1:-}"
+
+    if [ -z "$pep_ref" ]; then
+        echo -n "Enter PEP number or ID (e.g. 3 or PE-MON-PEP-003): "
+        read -r pep_ref
+    fi
+
+    local pep_num
+    pep_num=$(echo "$pep_ref" | grep -oE '[0-9]+$' | head -1)
+
+    if [ -z "$pep_num" ]; then
+        log "ERROR" "Could not parse PEP number from: $pep_ref"
+        exit 1
+    fi
+
+    local file_prefix
+    file_prefix=$(get_file_prefix)
+    local pep_padded
+    pep_padded=$(printf "%03d" "$((10#$pep_num))")
+    local pep_files=("$PEP_DIR"/${file_prefix}${pep_padded}-*.md)
+
+    if [ ! -f "${pep_files[0]}" ]; then
+        log "ERROR" "PEP ${pep_padded} not found (looked for ${file_prefix}${pep_padded}-*.md)"
+        exit 1
+    fi
+
+    if ! command -v git >/dev/null 2>&1 || [ ! -d ".git" ]; then
+        log "ERROR" "Not in a git repository"
+        exit 1
+    fi
+
+    # Branch name mirrors the filename: feature/pep-pe-mon-003-feat-slug
+    local branch_name
+    branch_name="feature/$(basename "${pep_files[0]}" .md)"
+
+    if git rev-parse --verify "$branch_name" >/dev/null 2>&1; then
+        log "WARN" "Branch already exists: $branch_name"
+        echo -n "Switch to it? [Y/n]: "
+        read -r response
+        if [[ ! "${response,,}" =~ ^n ]]; then
+            git checkout "$branch_name"
+            log "INFO" "Switched to: $branch_name"
+        fi
+    else
+        git checkout -b "$branch_name"
+        log "INFO" "Created and switched to: $branch_name"
+    fi
+}
+
+# Commit staged changes (or the PEP file itself) with the correct message format
+commit_pep() {
+    local pep_ref="${1:-}"
+
+    # Collect all remaining args as the message
+    if [ $# -ge 2 ]; then
+        shift
+        local message="$*"
+    else
+        local message=""
+    fi
+
+    if [ -z "$pep_ref" ]; then
+        echo -n "Enter PEP number or ID (e.g. 3 or PE-MON-PEP-003): "
+        read -r pep_ref
+    fi
+
+    local pep_num
+    pep_num=$(echo "$pep_ref" | grep -oE '[0-9]+$' | head -1)
+
+    if [ -z "$pep_num" ]; then
+        log "ERROR" "Could not parse PEP number from: $pep_ref"
+        exit 1
+    fi
+
+    if ! command -v git >/dev/null 2>&1 || [ ! -d ".git" ]; then
+        log "ERROR" "Not in a git repository"
+        exit 1
+    fi
+
+    local file_prefix
+    file_prefix=$(get_file_prefix)
+    local pep_padded
+    pep_padded=$(printf "%03d" "$((10#$pep_num))")
+    local pep_files=("$PEP_DIR"/${file_prefix}${pep_padded}-*.md)
+
+    if [ ! -f "${pep_files[0]}" ]; then
+        log "ERROR" "PEP ${pep_padded} not found"
+        exit 1
+    fi
+
+    if [ -z "$message" ]; then
+        echo -n "Commit message (prefix '${file_prefix}${pep_padded}: ' will be added): "
+        read -r message
+    fi
+
+    if [ -z "$message" ]; then
+        log "ERROR" "Message is required"
+        exit 1
+    fi
+
+    # If nothing staged, auto-stage the PEP file
+    if git diff --cached --quiet 2>/dev/null; then
+        log "INFO" "Nothing staged — staging ${pep_files[0]}"
+        git add "${pep_files[0]}"
+    fi
+
+    local full_message="${file_prefix}${pep_padded}: $message"
+    git commit -m "$full_message"
+    log "INFO" "Committed: $full_message"
+}
+
+# Migrate existing PEPs to the current naming scheme
+migrate_peps() {
+    local dry_run=false
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log "ERROR" "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ ! -d "$PEP_DIR" ]; then
+        log "WARN" "PEP directory not found: $PEP_DIR"
+        return
+    fi
+
+    local file_prefix
+    file_prefix=$(get_file_prefix)
+
+    # Known type slugs — used to detect already-typed filenames
+    local type_slugs=("proj" "feat" "proc" "infra" "docs" "bug" "enh" "research" "sec" "perf")
+
+    local migrated=0 skipped=0
+
+    # Only scan files where the number appears right after "pep-" — that is the old format.
+    # New-format files with codes (pep-pe-mon-NNN-...) don't match pep-[0-9][0-9][0-9]-* glob.
+    for pep in "$PEP_DIR"/pep-[0-9][0-9][0-9]-*.md; do
+        [ -f "$pep" ] || continue
+
+        local basename_pep
+        basename_pep=$(basename "$pep")
+        local num
+        num=$(echo "$basename_pep" | grep -oE '^pep-([0-9]{3})-' | grep -oE '[0-9]{3}')
+        [ -z "$num" ] && continue
+
+        local after_num
+        after_num=$(echo "$basename_pep" | sed "s/^pep-${num}-//")  # everything after pep-NNN-
+
+        # Check if the file already has a type slug prefix
+        local has_type_slug=false
+        local existing_type_slug=""
+        for ts in "${type_slugs[@]}"; do
+            if [[ "$after_num" == "${ts}-"* ]]; then
+                has_type_slug=true
+                existing_type_slug="$ts"
+                break
+            fi
+        done
+
+        # Skip if already in the target format for this repo
+        if [ "$file_prefix" = "pep-" ] && $has_type_slug; then
+            log "INFO" "Already up-to-date, skipping: $basename_pep"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Read PEP metadata from content
+        local title
+        title=$(grep "^\*\*Title:\*\*" "$pep" | sed 's/\*\*Title:\*\* //' | head -1)
+        local pep_type
+        pep_type=$(grep "^\*\*Type:\*\*" "$pep" | sed 's/\*\*Type:\*\* //' | head -1)
+
+        log "INFO" "Migrating: $basename_pep"
+        [ -n "$title" ] && echo "  Title: $title"
+
+        # Resolve type —————————————————————————————————————————————————
+        if $has_type_slug && { [[ "$pep_type" == *"|"* ]] || [ -z "$pep_type" ]; }; then
+            # Type slug is already in filename; map it back to a display name
+            case "$existing_type_slug" in
+                proj) pep_type="Project" ;; feat) pep_type="Feature" ;;
+                proc) pep_type="Process" ;; infra) pep_type="Infrastructure" ;;
+                docs) pep_type="Documentation" ;; bug) pep_type="Bug" ;;
+                enh) pep_type="Enhancement" ;; research) pep_type="Research" ;;
+                sec) pep_type="Security" ;; perf) pep_type="Performance" ;;
+            esac
+        elif [[ "$pep_type" == *"|"* ]] || [ -z "$pep_type" ]; then
+            # Type not yet selected — prompt the user
+            local pep_types_arr=("Project" "Feature" "Process" "Infrastructure" "Documentation" "Bug" "Enhancement" "Research" "Security" "Performance")
+            echo "  Type unclear (content shows: ${pep_type:-none})"
+            for i in "${!pep_types_arr[@]}"; do
+                printf "    %2d) %s\n" "$((i+1))" "${pep_types_arr[$i]}"
+            done
+            echo -n "  Select type [1-${#pep_types_arr[@]}, default 2 (Feature)]: "
+            read -r type_choice
+            if [[ "$type_choice" =~ ^[0-9]+$ ]] && [ "$type_choice" -ge 1 ] && [ "$type_choice" -le "${#pep_types_arr[@]}" ]; then
+                pep_type="${pep_types_arr[$((type_choice-1))]}"
+            else
+                pep_type="Feature"
+            fi
+        fi
+
+        local final_type_slug
+        final_type_slug=$(get_type_slug "$pep_type")
+
+        # Build the title slug part (strip existing type slug if present)
+        local title_slug
+        title_slug="${after_num%.md}"
+        if $has_type_slug; then
+            title_slug="${title_slug#${existing_type_slug}-}"
+        fi
+
+        # New filename
+        local new_filename="${PEP_DIR}/${file_prefix}${num}-${final_type_slug}-${title_slug}.md"
+        local new_pep_id
+        new_pep_id=$(get_pep_id "$((10#$num))")
+
+        echo "  → $(basename "$new_filename")  (ID: $new_pep_id)"
+
+        if $dry_run; then
+            continue
+        fi
+
+        cp "$pep" "$new_filename"
+
+        # Update heading:  # PEP-001: Title  →  # PE-MON-PEP-001: Title
+        sed -i.bak "s|^# PEP-${num}: |# ${new_pep_id}: |" "$new_filename"
+        # Update **PEP:** NNN  →  **ID:** PE-MON-PEP-001
+        sed -i.bak "s|^\*\*PEP:\*\* ${num}[[:space:]]*$|**ID:** ${new_pep_id}|" "$new_filename"
+        # Replace any existing **ID:** line
+        sed -i.bak "s|^\*\*ID:\*\*.*|**ID:** ${new_pep_id}|" "$new_filename"
+        # Fix Type if still pipe-separated
+        if grep -q "^\*\*Type:\*\*.*|" "$new_filename"; then
+            sed -i.bak "s|^\*\*Type:\*\*.*|**Type:** ${pep_type}|" "$new_filename"
+        fi
+        # Add Priority after Type if missing (awk handles multi-line insertion portably)
+        if ! grep -q "^\*\*Priority:\*\*" "$new_filename"; then
+            awk '/^\*\*Type:\*\*/{print; print "**Priority:** Medium"; next}1' \
+                "$new_filename" > "${new_filename}.tmp" && mv "${new_filename}.tmp" "$new_filename"
+        fi
+        # Replace inline PEP-NNN references throughout the document
+        sed -i.bak "s|PEP-$(printf "%03d" "$((10#$num))")|${new_pep_id}|g" "$new_filename"
+
+        rm -f "${new_filename}.bak"
+        rm "$pep"
+
+        migrated=$((migrated + 1))
+        log "INFO" "  Done"
+    done
+
+    if [ $((migrated + skipped)) -eq 0 ]; then
+        log "INFO" "No PEP files found to migrate"
+        return
+    fi
+
+    if $dry_run; then
+        log "INFO" "Dry run: $migrated would be migrated, $skipped already up-to-date"
+    else
+        log "INFO" "Done: $migrated migrated, $skipped already up-to-date"
+        if [ "$migrated" -gt 0 ] && [ -d ".git" ]; then
+            log "INFO" "Commit the changes: git add -A && git commit -m 'chore: migrate PEPs to new naming scheme'"
+        fi
     fi
 }
 
 # Create a new BLOG
 create_blog() {
+    if [ "${ENABLE_BLOGS:-y}" != "y" ]; then
+        log "ERROR" "Blogs feature is disabled. Set ENABLE_BLOGS=y in .peprc to enable."
+        exit 1
+    fi
+
     local blog_num="$1"
     local pep_num="$2"
-    
+
     if [ -z "$pep_num" ]; then
         echo -n "Enter PEP number for this blog: "
         read -r pep_num
     fi
-    
+
     if [ -z "$blog_num" ]; then
         blog_num=$(get_next_blog_number)
         log "INFO" "Auto-assigned BLOG number: $blog_num"
     fi
-    
+
     if [ -z "$pep_num" ]; then
         log "ERROR" "PEP number is required"
         exit 1
     fi
-    
-    # Verify PEP exists
-    local pep_files=($PEP_DIR/pep-$(printf "%03d" "$pep_num")-*.md)
+
+    local file_prefix
+    file_prefix=$(get_file_prefix)
+    local pep_files=("$PEP_DIR"/${file_prefix}$(printf "%03d" "$((10#$pep_num))")-*.md)
     if [ ! -f "${pep_files[0]}" ]; then
-        log "ERROR" "PEP-$(printf "%03d" "$pep_num") does not exist"
+        log "ERROR" "PEP $(printf "%03d" "$((10#$pep_num))") does not exist"
         exit 1
     fi
-    
+
     local filename="${BLOG_DIR}/blog-$(printf "%03d" "$blog_num")-pep-$(printf "%03d" "$pep_num")-implementation.md"
-    
+
     ensure_directories
-    
+
     if [ ! -f "${TEMPLATE_DIR}/blog-template.md" ]; then
         log "ERROR" "BLOG template not found: ${TEMPLATE_DIR}/blog-template.md"
         exit 1
     fi
-    
-    # Copy template and replace placeholders
+
     cp "${TEMPLATE_DIR}/blog-template.md" "$filename"
-    
+
     local author="${PEP_AUTHOR:-$(git config user.name 2>/dev/null || echo 'Unknown Author')}"
-    local today=$(date +%Y-%m-%d)
-    
+    local today
+    today=$(date +%Y-%m-%d)
+    local pep_id
+    pep_id=$(get_pep_id "$pep_num")
+
     sed -i "s/XXX/$(printf "%03d" "$blog_num")/g" "$filename"
-    sed -i "s/PEP-XXX/PEP-$(printf "%03d" "$pep_num")/g" "$filename"
+    sed -i "s/PEPID/$pep_id/g" "$filename"
     sed -i "s/YYYY-MM-DD/$today/g" "$filename"
     sed -i "s/\[Your Name\]/$author/g" "$filename"
-    
+
     log "INFO" "Created BLOG-$(printf "%03d" "$blog_num"): $filename"
-    
-    # Only open editor if explicitly configured to do so
+
     if [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${DEFAULT_EDITOR:-vi}" >/dev/null 2>&1; then
         "${DEFAULT_EDITOR:-vi}" "$filename"
     else
-        log "INFO" "Edit with: code $filename"
-        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc.local to auto-open"
+        log "INFO" "Edit with: ${DEFAULT_EDITOR:-code} $filename"
     fi
 }
 
@@ -274,41 +633,41 @@ list_peps() {
         log "WARN" "PEP directory does not exist: $PEP_DIR"
         return
     fi
-    
+
     echo -e "${BLUE}Project Enhancement Packages:${NC}"
     echo "=============================="
-    
+
     local found=false
-    for pep in $PEP_DIR/pep-*.md; do
-        if [ -f "$pep" ]; then
-            found=true
-            local num=$(basename "$pep" | sed 's/pep-\([0-9]*\)-.*/\1/')
-            local title=$(grep "^**Title:**" "$pep" | sed 's/**Title:** //' | head -1)
-            local status=$(grep "^**Status:**" "$pep" | sed 's/**Status:** //' | head -1)
-            local author=$(grep "^**Author:**" "$pep" | sed 's/**Author:** //' | head -1)
-            
-            case "$status" in
-                "Draft")
-                    status_color="${YELLOW}$status${NC}"
-                    ;;
-                "Active")
-                    status_color="${BLUE}$status${NC}"
-                    ;;
-                "Implemented")
-                    status_color="${GREEN}$status${NC}"
-                    ;;
-                "Rejected")
-                    status_color="${RED}$status${NC}"
-                    ;;
-                *)
-                    status_color="$status"
-                    ;;
-            esac
-            
-            printf "PEP-%s: %-40s [%s] by %s\n" "$num" "$title" "$status_color" "$author"
-        fi
+    for pep in "$PEP_DIR"/pep-*.md; do
+        [ -f "$pep" ] || continue
+        found=true
+
+        local raw_num
+        raw_num=$(basename "$pep" | grep -oE '[0-9]{3}' | head -1)
+        local pep_id
+        pep_id=$(get_pep_id "$((10#$raw_num))")
+
+        local title
+        title=$(grep "^\*\*Title:\*\*" "$pep" | sed 's/\*\*Title:\*\* //' | head -1)
+        local status
+        status=$(grep "^\*\*Status:\*\*" "$pep" | sed 's/\*\*Status:\*\* //' | head -1)
+        local pep_type
+        pep_type=$(grep "^\*\*Type:\*\*" "$pep" | sed 's/\*\*Type:\*\* //' | head -1)
+        local author
+        author=$(grep "^\*\*Author:\*\*" "$pep" | sed 's/\*\*Author:\*\* //' | head -1)
+
+        local status_color
+        case "$status" in
+            "Draft")       status_color="${YELLOW}$status${NC}" ;;
+            "Active")      status_color="${BLUE}$status${NC}" ;;
+            "Implemented") status_color="${GREEN}$status${NC}" ;;
+            "Rejected")    status_color="${RED}$status${NC}" ;;
+            *)             status_color="$status" ;;
+        esac
+
+        printf "%s [%s]: %-40s (%b) by %s\n" "$pep_id" "$pep_type" "$title" "$status_color" "$author"
     done
-    
+
     if [ "$found" = false ]; then
         echo "No PEPs found."
     fi
@@ -320,17 +679,20 @@ show_status() {
         log "WARN" "PEP directory does not exist: $PEP_DIR"
         return
     fi
-    
-    echo -e "${BLUE}PEP Status Summary:${NC}"
-    echo "==================="
-    
+
+    local example_id
+    example_id=$(get_pep_id 1)
+    echo -e "${BLUE}PEP Status Summary (ID format: ${example_id%001}NNN):${NC}"
+    echo "============================================="
+
     local total=0
     for status in Draft Active Implemented Rejected Superseded; do
-        local count=$(grep -l "^**Status:** $status" $PEP_DIR/pep-*.md 2>/dev/null | wc -l)
+        local count
+        count=$(grep -rl "^\*\*Status:\*\* $status" "$PEP_DIR"/pep-*.md 2>/dev/null | wc -l | tr -d ' ')
         printf "%-12s: %d\n" "$status" "$count"
         total=$((total + count))
     done
-    
+
     echo "-------------"
     printf "%-12s: %d\n" "Total" "$total"
 }
@@ -338,14 +700,21 @@ show_status() {
 # Initialize PEP framework in current directory
 init_framework() {
     log "INFO" "Initializing PEP framework..."
-    
+
     ensure_directories
-    
-    # Create .peprc (project-level) if it doesn't exist
+
     if [ ! -f "$CONFIG_FILE" ]; then
         cat > "$CONFIG_FILE" << EOF
 # PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$(basename "$(pwd)")"
+
+# PEP identifier codes — combined to build IDs like PROJECT_CODE-REPO_CODE-PEP-001
+# Leave blank to fall back to the default PEP-001 format
+PROJECT_CODE=""
+REPO_CODE=""
+
+# Enable/disable the Blogs (Build Logs) feature
+ENABLE_BLOGS="y"
 
 # Integration settings
 ZABBIX_HOST=""
@@ -364,7 +733,6 @@ EOF
         log "INFO" "Created configuration file: $CONFIG_FILE"
     fi
 
-    # Create .peprc.local (personal settings) if it doesn't exist
     local local_config="${CONFIG_FILE}.local"
     if [ ! -f "$local_config" ]; then
         cat > "$local_config" << EOF
@@ -375,28 +743,25 @@ AUTO_OPEN_EDITOR="true"
 EOF
         log "INFO" "Created personal configuration: $local_config"
     fi
-    
-    # Create templates if they don't exist
+
     create_templates
-    
-    # Create git hooks
     setup_git_hooks
-    
+
     log "INFO" "PEP framework initialized successfully!"
-    log "INFO" "Edit $CONFIG_FILE to customize settings"
+    log "INFO" "Edit $CONFIG_FILE to set your PROJECT_CODE and REPO_CODE"
     log "INFO" "Create your first PEP with: $0 new-pep 'Project Foundation'"
 }
 
-# Create template files
+# Warn if templates are missing (they come from cookiecutter or update-templates)
 create_templates() {
     if [ ! -f "${TEMPLATE_DIR}/pep-template.md" ]; then
-        log "ERROR" "PEP template should be created manually or via cookiecutter"
-        log "INFO" "See README.md for template content"
+        log "WARN" "PEP template not found: ${TEMPLATE_DIR}/pep-template.md"
+        log "INFO" "Run '$0 update-templates --source <path>' to pull templates from source"
     fi
-    
-    if [ ! -f "${TEMPLATE_DIR}/blog-template.md" ]; then
-        log "ERROR" "BLOG template should be created manually or via cookiecutter"
-        log "INFO" "See README.md for template content"
+
+    if [ "${ENABLE_BLOGS:-y}" = "y" ] && [ ! -f "${TEMPLATE_DIR}/blog-template.md" ]; then
+        log "WARN" "BLOG template not found: ${TEMPLATE_DIR}/blog-template.md"
+        log "INFO" "Run '$0 update-templates --source <path>' to pull templates from source"
     fi
 }
 
@@ -405,7 +770,6 @@ update_tools() {
     local source=""
     local save_source=false
 
-    # Parse --source flag
     while [ $# -gt 0 ]; do
         case "$1" in
             --source) source="$2"; shift 2 ;;
@@ -414,7 +778,6 @@ update_tools() {
         esac
     done
 
-    # Fall back to .peprc setting
     if [ -z "$source" ] && [ -n "${PEP_FRAMEWORK_SOURCE:-}" ]; then
         source="$PEP_FRAMEWORK_SOURCE"
     fi
@@ -430,27 +793,21 @@ update_tools() {
     cp "$dest" "$backup"
     log "INFO" "Backed up current tools to $backup"
 
-    # Download or copy
     if echo "$source" | grep -qE '^https?://'; then
         if command -v curl >/dev/null 2>&1; then
             curl -fsSL "$source" -o "$dest"
         elif command -v wget >/dev/null 2>&1; then
             wget -qO "$dest" "$source"
         else
-            log "ERROR" "Neither curl nor wget found — cannot download from URL"
-            cp "$backup" "$dest"
-            exit 1
+            log "ERROR" "Neither curl nor wget found"
+            cp "$backup" "$dest"; exit 1
         fi
     else
-        # Local path — accept either the tools dir or the script file directly
         local src_file="$source"
-        if [ -d "$source" ]; then
-            src_file="$source/pep-tools.sh"
-        fi
+        [ -d "$source" ] && src_file="$source/pep-tools.sh"
         if [ ! -f "$src_file" ]; then
             log "ERROR" "Source file not found: $src_file"
-            cp "$backup" "$dest"
-            exit 1
+            cp "$backup" "$dest"; exit 1
         fi
         cp "$src_file" "$dest"
     fi
@@ -458,7 +815,6 @@ update_tools() {
     chmod +x "$dest"
     log "INFO" "Updated $dest from $source"
 
-    # Persist source into .peprc.local (personal, gitignored) if requested or not already set
     local local_config="${CONFIG_FILE}.local"
     if $save_source || [ -z "${PEP_FRAMEWORK_SOURCE:-}" ]; then
         if grep -q "PEP_FRAMEWORK_SOURCE" "$local_config" 2>/dev/null; then
@@ -470,22 +826,74 @@ update_tools() {
         log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $local_config"
     fi
 
-    # Exit immediately — bash reads scripts in chunks from disk, so continuing to
-    # execute after replacing this file on disk causes it to read garbage from the
-    # new file at the old byte offset, producing spurious syntax errors.
+    # Exit immediately — bash reads scripts in chunks from disk; continuing after
+    # replacing this file causes it to read garbage at the old byte offset.
     exit 0
+}
+
+# Update template files from a source path
+update_templates() {
+    local source=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --source) source="$2"; shift 2 ;;
+            *) log "ERROR" "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$source" ] && [ -n "${PEP_FRAMEWORK_SOURCE:-}" ]; then
+        source="$PEP_FRAMEWORK_SOURCE"
+    fi
+
+    if [ -z "$source" ]; then
+        log "ERROR" "No source specified. Provide --source <path> or set PEP_FRAMEWORK_SOURCE in .peprc.local"
+        exit 1
+    fi
+
+    if echo "$source" | grep -qE '^https?://'; then
+        log "ERROR" "URL sources are not supported for update-templates — use a local path."
+        log "INFO" "Set PEP_FRAMEWORK_SOURCE to the local tools/ directory of your cookiecutter checkout."
+        exit 1
+    fi
+
+    local src_dir="$source"
+    [ -f "$source" ] && src_dir="$(dirname "$source")"
+
+    local template_src
+    template_src="$(cd "${src_dir}/../docs/templates" 2>/dev/null && pwd)" || true
+
+    if [ -z "$template_src" ] || [ ! -d "$template_src" ]; then
+        log "ERROR" "Templates directory not found. Expected at: ${src_dir}/../docs/templates"
+        exit 1
+    fi
+
+    ensure_directories
+
+    local updated=0
+    for template in pep-template.md blog-template.md; do
+        if [ -f "${template_src}/${template}" ]; then
+            cp "${template_src}/${template}" "${TEMPLATE_DIR}/${template}"
+            log "INFO" "Updated ${TEMPLATE_DIR}/${template}"
+            updated=$((updated + 1))
+        else
+            log "WARN" "Not found in source: ${template_src}/${template}"
+        fi
+    done
+
+    log "INFO" "Updated ${updated} template(s) from ${template_src}"
 }
 
 # Setup git hooks
 setup_git_hooks() {
     local hook_file=".git/hooks/commit-msg"
     local source_hook="tools/git-hooks/commit-msg"
-    
+
     if [ ! -f "$source_hook" ]; then
         log "WARN" "Git hook source not found: $source_hook"
         return
     fi
-    
+
     if [ -d ".git" ]; then
         cp "$source_hook" "$hook_file"
         chmod +x "$hook_file"
@@ -497,39 +905,55 @@ setup_git_hooks() {
 
 # Show help
 show_help() {
+    local file_prefix
+    file_prefix=$(get_file_prefix)
+    local example_id
+    example_id=$(get_pep_id 1)
+    local id_format="${example_id%001}NNN"
+
     cat << EOF
-${BLUE}PEP Management Tool${NC}
-===================
+${BLUE}PEP Management Tool v2.0${NC}
+========================
 
 ${GREEN}Usage:${NC} $0 <command> [arguments]
 
-${GREEN}Commands:${NC}
-  ${YELLOW}init${NC}                           Initialize PEP framework in current directory
-  ${YELLOW}new-pep${NC} [number] [title]       Create a new PEP (auto-numbers if not specified)
-  ${YELLOW}new-blog${NC} [blog-num] [pep-num]  Create implementation blog for PEP
-  ${YELLOW}list${NC}                           List all PEPs with status
-  ${YELLOW}status${NC}                         Show status summary
-  ${YELLOW}update-tools${NC} [--source <path|url>]  Update pep-tools.sh from source
-  ${YELLOW}help${NC}                                Show this help message
+${GREEN}PEP commands:${NC}
+  ${YELLOW}new-pep${NC} [number] [title]                Create a new PEP (prompts for type, priority, abstract)
+  ${YELLOW}new-branch${NC} [pep-num]                   Create git feature branch for a PEP
+  ${YELLOW}commit${NC} <pep-num> [message]              Commit with correct PEP message format
+$([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [pep-num]         Create implementation blog for a PEP")
+  ${YELLOW}list${NC}                                    List all PEPs with status
+  ${YELLOW}status${NC}                                  Show status summary
+  ${YELLOW}migrate${NC} [--dry-run]                     Rename existing PEPs to current naming scheme
+
+${GREEN}Framework commands:${NC}
+  ${YELLOW}init${NC}                                    Initialize PEP framework in current directory
+  ${YELLOW}update-tools${NC} [--source <path|url>]      Update pep-tools.sh from source
+  ${YELLOW}update-templates${NC} [--source <path>]      Update PEP/BLOG templates from source
+  ${YELLOW}help${NC}                                    Show this help message
 
 ${GREEN}Examples:${NC}
-  $0 init
-  $0 new-pep "Nutanix Integration"
-  $0 new-pep 5 "Nutanix Integration"
-  $0 new-blog 3 5
-  $0 list
-  $0 status
-  $0 update-tools --source /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
-  $0 update-tools  # uses PEP_FRAMEWORK_SOURCE from .peprc.local
+  $0 new-pep "Monitoring Integration"        # create PEP, answer type/priority/abstract prompts
+  $0 new-branch 5                            # create feature/pep-...-005-... branch
+  $0 commit 5 "Add Prometheus scrape config" # commit with correct prefix
+$([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                           # create blog-003 for pep-005")
+  $0 migrate --dry-run                       # preview rename of old-format PEPs
+  $0 migrate                                 # apply rename
+  $0 update-tools --source /path/to/cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
+  $0 update-templates                        # uses PEP_FRAMEWORK_SOURCE from .peprc.local
+
+${GREEN}PEP Types:${NC}
+  Project | Feature | Process | Infrastructure | Documentation | Bug | Enhancement | Research | Security | Performance
+
+${GREEN}ID & file naming (this repo):${NC}
+  ID format:   ${YELLOW}${id_format}${NC}   (e.g. ${example_id})
+  File format: ${YELLOW}${file_prefix}NNN-type-slug.md${NC}
+  Commit:      ${YELLOW}$(echo "$file_prefix" | tr '[:upper:]' '[:lower:]')NNN: description${NC}
+  Branch:      ${YELLOW}feature/${file_prefix}NNN-type-slug${NC}
 
 ${GREEN}Configuration:${NC}
-  Edit ${YELLOW}.peprc${NC} for project-level settings (committed, shared with the team).
-  Edit ${YELLOW}.peprc.local${NC} for personal settings: author, editor, PEP_FRAMEWORK_SOURCE.
-  Copy ${YELLOW}.peprc.local.example${NC} to ${YELLOW}.peprc.local${NC} to get started.
-
-${GREEN}Git Integration:${NC}
-  Use branch naming: ${YELLOW}feature/pep-XXX-description${NC}
-  Commit messages: ${YELLOW}pep-XXX: description${NC}
+  ${YELLOW}.peprc${NC}       — project settings: PROJECT_CODE, REPO_CODE, ENABLE_BLOGS (commit this)
+  ${YELLOW}.peprc.local${NC} — personal settings: PEP_AUTHOR, DEFAULT_EDITOR, PEP_FRAMEWORK_SOURCE (gitignored)
 EOF
 }
 
@@ -540,8 +964,16 @@ main() {
             init_framework
             ;;
         "new-pep")
-            shift  # Remove 'new-pep' from arguments
-            create_pep "$@"  # Pass all remaining arguments
+            shift
+            create_pep "$@"
+            ;;
+        "new-branch")
+            shift
+            new_branch "$@"
+            ;;
+        "commit")
+            shift
+            commit_pep "$@"
             ;;
         "new-blog")
             create_blog "$2" "$3"
@@ -552,9 +984,17 @@ main() {
         "status")
             show_status
             ;;
+        "migrate")
+            shift
+            migrate_peps "$@"
+            ;;
         "update-tools")
             shift
             update_tools "$@"
+            ;;
+        "update-templates")
+            shift
+            update_templates "$@"
             ;;
         "help"|"-h"|"--help")
             show_help
@@ -567,5 +1007,4 @@ main() {
     esac
 }
 
-# Run main function with all arguments
 main "$@"

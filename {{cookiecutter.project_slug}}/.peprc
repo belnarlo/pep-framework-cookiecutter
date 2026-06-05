@@ -4,6 +4,16 @@
 # Project information
 PROJECT_NAME="{{cookiecutter.project_name}}"
 
+# PEP identifier codes — combined to build IDs like PROJECT_CODE-REPO_CODE-001
+# Leave blank to fall back to the default "PEP" prefix (e.g. PEP-001)
+# For ADO: PROJECT_CODE = short ADO project code, REPO_CODE = short repo code
+PROJECT_CODE="{{cookiecutter.project_code}}"
+REPO_CODE="{{cookiecutter.repo_code}}"
+
+# Enable/disable the Blogs (Build Logs) feature
+# Set to "n" for work repos where you don't need implementation logs
+ENABLE_BLOGS="{{cookiecutter.use_blogs}}"
+
 # Directory configuration (relative to project root)
 # Uncomment and modify if you want different paths
 # PEP_DIR="docs/peps"
