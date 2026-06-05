@@ -154,16 +154,18 @@ get_user_input() {
     echo "  2) vim"
     echo "  3) nano"
     echo "  4) code (VS Code)"
-    echo "  5) emacs"
-    echo -n "Choose [1-5, default 1]: "
+    echo "  5) zed"
+    echo "  6) emacs"
+    echo -n "Choose [1-6, default 1]: "
     read -r editor_choice
-    
+
     case "$editor_choice" in
         1) DEFAULT_EDITOR="vi" ;;
         2) DEFAULT_EDITOR="vim" ;;
         3) DEFAULT_EDITOR="nano" ;;
         4) DEFAULT_EDITOR="code" ;;
-        5) DEFAULT_EDITOR="emacs" ;;
+        5) DEFAULT_EDITOR="zed" ;;
+        6) DEFAULT_EDITOR="emacs" ;;
         *) DEFAULT_EDITOR="vi" ;;
     esac
     
@@ -186,10 +188,44 @@ download_framework() {
     log "STEP" "Downloading framework files..."
 
     local current_dir="$(pwd)"
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local template_dir="${script_dir}/{{cookiecutter.project_slug}}"
+
+    # First, check if we're running from within the template repository
+    if [ -d "$template_dir" ]; then
+        log "INFO" "Found local template directory: $template_dir"
+        log "INFO" "Copying framework files from local template..."
+
+        cd "$TEMP_DIR"
+        # Copy both regular files and dotfiles
+        shopt -s dotglob
+        if cp -r "$template_dir"/* . 2>/dev/null; then
+            shopt -u dotglob
+            log "INFO" "Successfully copied files from local template"
+
+            # Verify critical directories exist
+            if [ -d "tools" ] && [ -d "docs/templates" ]; then
+                log "INFO" "Verified tools/ and docs/templates/ directories"
+            else
+                log "ERROR" "Critical directories missing after copy!"
+                log "INFO" "tools/ exists: $([ -d "tools" ] && echo "yes" || echo "no")"
+                log "INFO" "docs/templates/ exists: $([ -d "docs/templates" ] && echo "yes" || echo "no")"
+            fi
+        else
+            shopt -u dotglob
+            log "ERROR" "Failed to copy from local template"
+            create_framework_manually
+        fi
+        cd "$current_dir"
+        return
+    fi
+
+    # If not running locally, try to clone from GitHub
     cd "$TEMP_DIR"
 
     if command -v git >/dev/null 2>&1; then
-        if git clone --depth 1 "$TEMPLATE_REPO" template; then
+        log "INFO" "Attempting to clone from repository: $TEMPLATE_REPO"
+        if git clone --depth 1 "$TEMPLATE_REPO" template 2>&1; then
             log "INFO" "Successfully cloned template repository"
 
             if [ -d "template/{{cookiecutter.project_slug}}" ]; then
@@ -198,6 +234,13 @@ download_framework() {
                 shopt -s dotglob
                 cp -r "template/{{cookiecutter.project_slug}}"/* .
                 shopt -u dotglob
+
+                # Verify critical directories exist
+                if [ -d "tools" ] && [ -d "docs/templates" ]; then
+                    log "INFO" "Verified tools/ and docs/templates/ directories"
+                else
+                    log "WARN" "Critical directories missing after copy from clone!"
+                fi
             else
                 log "WARN" "Template directory not found in expected location"
                 log "INFO" "Creating framework files manually..."
@@ -457,8 +500,13 @@ This project uses the Project Enhancement Package (PEP) framework for structured
 See the PEP framework documentation for complete usage information.
 EOF
     
-    # Create .gitignore
-    cat > .gitignore << 'EOF'
+    # Create or append to .gitignore
+    if [ -f .gitignore ]; then
+        if ! grep -q "# PEP Framework specific" .gitignore 2>/dev/null; then
+            log "INFO" "Appending PEP framework entries to existing .gitignore"
+            cat >> .gitignore << 'EOF'
+
+# --- PEP Framework entries (added by setup script) ---
 # PEP Framework specific
 .peprc.local
 *.tmp
@@ -479,6 +527,31 @@ EOF
 *.bak
 *.orig
 EOF
+        fi
+    else
+        log "INFO" "Creating new .gitignore"
+        cat > .gitignore << 'EOF'
+# PEP Framework specific
+.peprc.local
+*.tmp
+
+# Common ignores
+.DS_Store
+*.log
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Backup files
+*.bak
+*.orig
+EOF
+    fi
     
     # Create directory markers
     touch docs/peps/.gitkeep
@@ -498,10 +571,10 @@ install_framework() {
 
     log "STEP" "Installing framework files..."
 
-    # Check for existing files (but not README.md since we preserve it)
+    # Check for existing files (but not README.md since we preserve it, and .gitignore which we'll append to)
     local conflicts=()
     shopt -s dotglob
-    for file in .peprc .gitignore docs/templates tools/pep-tools.sh; do
+    for file in .peprc docs/templates tools/pep-tools.sh; do
         if [ -e "$file" ]; then
             conflicts+=("$file")
         fi
@@ -532,28 +605,34 @@ install_framework() {
     # Copy framework files
     log "INFO" "Copying files from $TEMP_DIR to $original_dir"
 
-    # List what we're about to copy (excluding template directory and README.md for existing projects)
-    if [ "$(ls -A "$TEMP_DIR")" ]; then
+    # List what we're about to copy (excluding template directory, README.md, and .gitignore)
+    if [ "$(ls -A "$TEMP_DIR" 2>/dev/null)" ]; then
         log "INFO" "Files to copy:"
+        shopt -s dotglob
         for item in "$TEMP_DIR"/*; do
+            [ -e "$item" ] || continue
             basename_item=$(basename "$item")
-            # Skip the template directory and README.md for existing projects
-            if [ "$basename_item" != "template" ] && [ "$basename_item" != "README.md" ]; then
+            # Skip the template directory, README.md, and .gitignore (handled separately)
+            if [ "$basename_item" != "template" ] && [ "$basename_item" != "README.md" ] && [ "$basename_item" != ".gitignore" ]; then
                 echo "  - $basename_item"
             fi
         done
+        shopt -u dotglob
 
-        # Copy files, excluding the template directory and README.md
+        # Copy files, excluding the template directory, README.md, and .gitignore
+        shopt -s dotglob
         for item in "$TEMP_DIR"/*; do
+            [ -e "$item" ] || continue
             basename_item=$(basename "$item")
-            # Skip template directory and README.md (we'll handle README separately)
-            if [ "$basename_item" != "template" ] && [ "$basename_item" != "README.md" ]; then
+            # Skip template directory, README.md, and .gitignore (we'll handle these specially)
+            if [ "$basename_item" != "template" ] && [ "$basename_item" != "README.md" ] && [ "$basename_item" != ".gitignore" ]; then
                 if ! cp -rv "$item" "$original_dir/" 2>&1 | sed 's/^/  /'; then
                     log "ERROR" "Failed to copy $basename_item"
                     exit 1
                 fi
             fi
         done
+        shopt -u dotglob
 
         # Handle README: Create PEP_FRAMEWORK.md instead of overwriting README.md
         if [ ! -f "$original_dir/README.md" ]; then
@@ -567,6 +646,25 @@ install_framework() {
             if [ -f "$TEMP_DIR/README.md" ]; then
                 log "INFO" "Creating README_PEP_TEMPLATE.md with full cookiecutter template for reference"
                 process_template "$TEMP_DIR/README.md" "$original_dir/README_PEP_TEMPLATE.md"
+            fi
+        fi
+
+        # Handle .gitignore: Append instead of overwrite
+        if [ -f "$TEMP_DIR/.gitignore" ]; then
+            if [ -f "$original_dir/.gitignore" ]; then
+                # Check if PEP framework entries already exist
+                if grep -q "# PEP Framework specific" "$original_dir/.gitignore" 2>/dev/null; then
+                    log "INFO" "PEP framework entries already in .gitignore, skipping"
+                else
+                    log "INFO" "Appending PEP framework entries to existing .gitignore"
+                    echo "" >> "$original_dir/.gitignore"
+                    echo "# --- PEP Framework entries (added by setup script) ---" >> "$original_dir/.gitignore"
+                    cat "$TEMP_DIR/.gitignore" >> "$original_dir/.gitignore"
+                    log "INFO" "Added PEP framework entries to .gitignore"
+                fi
+            else
+                log "INFO" "No existing .gitignore, creating new one"
+                cp "$TEMP_DIR/.gitignore" "$original_dir/.gitignore"
             fi
         fi
 

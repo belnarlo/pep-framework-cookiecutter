@@ -15,6 +15,7 @@
         "vim",
         "nano",
         "code",
+        "zed",
         "emacs"
     ],
     "project_type": [
