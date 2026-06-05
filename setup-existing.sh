@@ -379,7 +379,7 @@ This project uses **Project Enhancement Packages (PEPs)** for structured develop
 
 ## Configuration
 
-Current project settings (edit `.peprc` to modify):
+Current project settings (project settings in `.peprc`, personal settings in `.peprc.local`):
 
 - **Author:** AUTHOR_NAME_PLACEHOLDER
 - **Editor:** EDITOR_PLACEHOLDER
@@ -453,11 +453,9 @@ create_framework_manually() {
     mkdir -p docs/{peps,blogs,templates}
     mkdir -p tools/git-hooks
     
-    # Create basic .peprc
+    # Create .peprc (project-level, committed)
     cat > .peprc << EOF
-# PEP Framework Configuration
-PEP_AUTHOR="$AUTHOR_NAME"
-DEFAULT_EDITOR="$DEFAULT_EDITOR"
+# PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$PROJECT_NAME"
 PROJECT_TYPE="$PROJECT_TYPE"
 ZABBIX_HOST="$ZABBIX_HOST"
@@ -466,6 +464,14 @@ REQUIRE_PEP_REFERENCE=$([ "$REQUIRE_PEP_REFERENCE" = "y" ] && echo "true" || ech
 SLACK_WEBHOOK=""
 EMAIL_NOTIFICATIONS="false"
 DEBUG="false"
+EOF
+
+    # Create .peprc.local (personal settings, gitignored)
+    cat > .peprc.local << EOF
+# PEP Framework — personal settings (do NOT commit this file)
+PEP_AUTHOR="$AUTHOR_NAME"
+DEFAULT_EDITOR="$DEFAULT_EDITOR"
+AUTO_OPEN_EDITOR="true"
 EOF
     
     # Create basic README
@@ -674,22 +680,18 @@ install_framework() {
         exit 1
     fi
 
-    # Customize .peprc with user's settings
+    # Customise .peprc with project-level settings
     if [ -f ".peprc" ]; then
-        sed -i.bak "s/PEP_AUTHOR=.*/PEP_AUTHOR=\"$AUTHOR_NAME\"/" .peprc
-        sed -i.bak "s/DEFAULT_EDITOR=.*/DEFAULT_EDITOR=\"$DEFAULT_EDITOR\"/" .peprc
         sed -i.bak "s/PROJECT_NAME=.*/PROJECT_NAME=\"$PROJECT_NAME\"/" .peprc
         sed -i.bak "s/ZABBIX_HOST=.*/ZABBIX_HOST=\"$ZABBIX_HOST\"/" .peprc
         sed -i.bak "s|GRAFANA_URL=.*|GRAFANA_URL=\"$GRAFANA_URL\"|" .peprc
         sed -i.bak "s/REQUIRE_PEP_REFERENCE=.*/REQUIRE_PEP_REFERENCE=$([ "$REQUIRE_PEP_REFERENCE" = "y" ] && echo "true" || echo "false")/" .peprc
         rm -f .peprc.bak
-        log "INFO" "Customized .peprc with your settings"
+        log "INFO" "Customised .peprc with project settings"
     else
         log "WARN" ".peprc not found, creating one..."
         cat > .peprc << EOF
-# PEP Framework Configuration
-PEP_AUTHOR="$AUTHOR_NAME"
-DEFAULT_EDITOR="$DEFAULT_EDITOR"
+# PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$PROJECT_NAME"
 ZABBIX_HOST="$ZABBIX_HOST"
 GRAFANA_URL="$GRAFANA_URL"
@@ -699,6 +701,15 @@ EMAIL_NOTIFICATIONS="false"
 DEBUG="false"
 EOF
     fi
+
+    # Write personal settings to .peprc.local (gitignored)
+    cat > .peprc.local << EOF
+# PEP Framework — personal settings (do NOT commit this file)
+PEP_AUTHOR="$AUTHOR_NAME"
+DEFAULT_EDITOR="$DEFAULT_EDITOR"
+AUTO_OPEN_EDITOR="true"
+EOF
+    log "INFO" "Created .peprc.local with your personal settings"
 
     # Make scripts executable
     if [ -f "tools/pep-tools.sh" ]; then

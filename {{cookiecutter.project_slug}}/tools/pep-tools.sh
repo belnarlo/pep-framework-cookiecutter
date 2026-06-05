@@ -18,9 +18,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Source configuration if it exists
+# Source configuration: project-level first, then personal overrides
 if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
+fi
+if [ -f "${CONFIG_FILE}.local" ]; then
+    source "${CONFIG_FILE}.local"
 fi
 
 # Logging function
@@ -203,7 +206,7 @@ create_pep() {
     else
         log "INFO" "Edit with: code $filename"
         log "INFO" "Or use: $0 new-pep --code 'Title' to open in VS Code"
-        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc to auto-open"
+        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc.local to auto-open"
     fi
 }
 
@@ -261,7 +264,7 @@ create_blog() {
         "${DEFAULT_EDITOR:-vi}" "$filename"
     else
         log "INFO" "Edit with: code $filename"
-        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc to auto-open"
+        log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc.local to auto-open"
     fi
 }
 
@@ -338,12 +341,10 @@ init_framework() {
     
     ensure_directories
     
-    # Create .peprc if it doesn't exist
+    # Create .peprc (project-level) if it doesn't exist
     if [ ! -f "$CONFIG_FILE" ]; then
         cat > "$CONFIG_FILE" << EOF
-# PEP Configuration
-PEP_AUTHOR="$(git config user.name 2>/dev/null || echo 'Your Name')"
-DEFAULT_EDITOR="vi"
+# PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$(basename "$(pwd)")"
 
 # Integration settings
@@ -354,13 +355,25 @@ GRAFANA_URL=""
 SLACK_WEBHOOK=""
 EMAIL_NOTIFICATIONS="false"
 
+# Git integration — require all commits to reference a PEP
+REQUIRE_PEP_REFERENCE=false
+
 # Debug mode
 DEBUG="false"
-
-# Automatically open editor after creating PEP/BLOG
-AUTO_OPEN_EDITOR="true"
 EOF
         log "INFO" "Created configuration file: $CONFIG_FILE"
+    fi
+
+    # Create .peprc.local (personal settings) if it doesn't exist
+    local local_config="${CONFIG_FILE}.local"
+    if [ ! -f "$local_config" ]; then
+        cat > "$local_config" << EOF
+# PEP Framework — personal settings (do NOT commit this file)
+PEP_AUTHOR="$(git config user.name 2>/dev/null || echo 'Your Name')"
+DEFAULT_EDITOR="${EDITOR:-vi}"
+AUTO_OPEN_EDITOR="true"
+EOF
+        log "INFO" "Created personal configuration: $local_config"
     fi
     
     # Create templates if they don't exist
@@ -407,7 +420,7 @@ update_tools() {
     fi
 
     if [ -z "$source" ]; then
-        log "ERROR" "No source specified. Provide --source <path|url> or set PEP_FRAMEWORK_SOURCE in .peprc"
+        log "ERROR" "No source specified. Provide --source <path|url> or set PEP_FRAMEWORK_SOURCE in .peprc.local"
         exit 1
     fi
 
@@ -445,14 +458,16 @@ update_tools() {
     chmod +x "$dest"
     log "INFO" "Updated $dest from $source"
 
-    # Persist source into .peprc if requested or not already set
+    # Persist source into .peprc.local (personal, gitignored) if requested or not already set
+    local local_config="${CONFIG_FILE}.local"
     if $save_source || [ -z "${PEP_FRAMEWORK_SOURCE:-}" ]; then
-        if grep -q "PEP_FRAMEWORK_SOURCE" "$CONFIG_FILE" 2>/dev/null; then
-            sed -i.bak "s|PEP_FRAMEWORK_SOURCE=.*|PEP_FRAMEWORK_SOURCE=\"$source\"|" "$CONFIG_FILE"
+        if grep -q "PEP_FRAMEWORK_SOURCE" "$local_config" 2>/dev/null; then
+            sed -i.bak "s|PEP_FRAMEWORK_SOURCE=.*|PEP_FRAMEWORK_SOURCE=\"$source\"|" "$local_config"
+            rm -f "${local_config}.bak"
         else
-            echo "PEP_FRAMEWORK_SOURCE=\"$source\"" >> "$CONFIG_FILE"
+            echo "PEP_FRAMEWORK_SOURCE=\"$source\"" >> "$local_config"
         fi
-        log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $CONFIG_FILE"
+        log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $local_config"
     fi
 }
 
@@ -500,11 +515,12 @@ ${GREEN}Examples:${NC}
   $0 list
   $0 status
   $0 update-tools --source /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
-  $0 update-tools  # uses PEP_FRAMEWORK_SOURCE from .peprc
+  $0 update-tools  # uses PEP_FRAMEWORK_SOURCE from .peprc.local
 
 ${GREEN}Configuration:${NC}
-  Edit ${YELLOW}.peprc${NC} to customize author, editor, and other settings.
-  Set ${YELLOW}PEP_FRAMEWORK_SOURCE${NC} in .peprc to avoid specifying --source each time.
+  Edit ${YELLOW}.peprc${NC} for project-level settings (committed, shared with the team).
+  Edit ${YELLOW}.peprc.local${NC} for personal settings: author, editor, PEP_FRAMEWORK_SOURCE.
+  Copy ${YELLOW}.peprc.local.example${NC} to ${YELLOW}.peprc.local${NC} to get started.
 
 ${GREEN}Git Integration:${NC}
   Use branch naming: ${YELLOW}feature/pep-XXX-description${NC}

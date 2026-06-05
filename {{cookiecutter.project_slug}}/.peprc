@@ -1,19 +1,13 @@
-# PEP Framework Configuration
-# This file is sourced by pep-tools.sh and contains project-specific settings
-
-# Author information (used in PEP/BLOG templates)
-PEP_AUTHOR="Your Name"
-
-# Default editor for creating/editing PEPs and BLOGs
-DEFAULT_EDITOR="vi"
+# PEP Framework Configuration — project-level settings (committed, shared with the team)
+# Personal settings (author, editor, etc.) belong in .peprc.local (gitignored).
 
 # Project information
-PROJECT_NAME="Generic PEP Framework"
+PROJECT_NAME="{{cookiecutter.project_name}}"
 
 # Directory configuration (relative to project root)
 # Uncomment and modify if you want different paths
 # PEP_DIR="docs/peps"
-# BLOG_DIR="docs/blogs" 
+# BLOG_DIR="docs/blogs"
 # TEMPLATE_DIR="docs/templates"
 
 # Integration settings for monitoring
@@ -30,8 +24,3 @@ EMAIL_NOTIFICATIONS="false"
 
 # Debug mode - set to true for verbose output
 DEBUG="false"
-
-# Template customization
-# Set to true to automatically open editor after creating PEP/BLOG
-AUTO_OPEN_EDITOR="true"
-# CREATE_GIT_BRANCH="false"
