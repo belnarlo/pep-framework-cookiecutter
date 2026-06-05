@@ -469,6 +469,11 @@ update_tools() {
         fi
         log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $local_config"
     fi
+
+    # Exit immediately — bash reads scripts in chunks from disk, so continuing to
+    # execute after replacing this file on disk causes it to read garbage from the
+    # new file at the old byte offset, producing spurious syntax errors.
+    exit 0
 }
 
 # Setup git hooks
