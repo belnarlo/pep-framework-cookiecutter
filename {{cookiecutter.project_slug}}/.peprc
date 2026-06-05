@@ -33,5 +33,5 @@ DEBUG="false"
 
 # Template customization
 # Set to true to automatically open editor after creating PEP/BLOG
-AUTO_OPEN_EDITOR="false"
+AUTO_OPEN_EDITOR="true"
 # CREATE_GIT_BRANCH="false"

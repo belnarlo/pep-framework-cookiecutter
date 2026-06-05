@@ -197,9 +197,9 @@ create_pep() {
             log "WARN" "VS Code not found, please install 'code' command"
             log "INFO" "Edit with: code $filename"
         fi
-    elif [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${EDITOR:-vi}" >/dev/null 2>&1; then
-        log "INFO" "Opening in ${EDITOR:-vi}..."
-        "${EDITOR:-vi}" "$filename"
+    elif [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${DEFAULT_EDITOR:-vi}" >/dev/null 2>&1; then
+        log "INFO" "Opening in ${DEFAULT_EDITOR:-vi}..."
+        "${DEFAULT_EDITOR:-vi}" "$filename"
     else
         log "INFO" "Edit with: code $filename"
         log "INFO" "Or use: $0 new-pep --code 'Title' to open in VS Code"
@@ -257,8 +257,8 @@ create_blog() {
     log "INFO" "Created BLOG-$(printf "%03d" "$blog_num"): $filename"
     
     # Only open editor if explicitly configured to do so
-    if [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${EDITOR:-vi}" >/dev/null 2>&1; then
-        "${EDITOR:-vi}" "$filename"
+    if [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${DEFAULT_EDITOR:-vi}" >/dev/null 2>&1; then
+        "${DEFAULT_EDITOR:-vi}" "$filename"
     else
         log "INFO" "Edit with: code $filename"
         log "INFO" "Or set AUTO_OPEN_EDITOR=true in .peprc to auto-open"
@@ -356,6 +356,9 @@ EMAIL_NOTIFICATIONS="false"
 
 # Debug mode
 DEBUG="false"
+
+# Automatically open editor after creating PEP/BLOG
+AUTO_OPEN_EDITOR="true"
 EOF
         log "INFO" "Created configuration file: $CONFIG_FILE"
     fi
@@ -381,6 +384,75 @@ create_templates() {
     if [ ! -f "${TEMPLATE_DIR}/blog-template.md" ]; then
         log "ERROR" "BLOG template should be created manually or via cookiecutter"
         log "INFO" "See README.md for template content"
+    fi
+}
+
+# Update pep-tools.sh from a source path or URL
+update_tools() {
+    local source=""
+    local save_source=false
+
+    # Parse --source flag
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --source) source="$2"; shift 2 ;;
+            --save)   save_source=true; shift ;;
+            *) log "ERROR" "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    # Fall back to .peprc setting
+    if [ -z "$source" ] && [ -n "${PEP_FRAMEWORK_SOURCE:-}" ]; then
+        source="$PEP_FRAMEWORK_SOURCE"
+    fi
+
+    if [ -z "$source" ]; then
+        log "ERROR" "No source specified. Provide --source <path|url> or set PEP_FRAMEWORK_SOURCE in .peprc"
+        exit 1
+    fi
+
+    local dest="tools/pep-tools.sh"
+    local backup="${dest}.bak"
+
+    cp "$dest" "$backup"
+    log "INFO" "Backed up current tools to $backup"
+
+    # Download or copy
+    if echo "$source" | grep -qE '^https?://'; then
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$source" -o "$dest"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$dest" "$source"
+        else
+            log "ERROR" "Neither curl nor wget found — cannot download from URL"
+            cp "$backup" "$dest"
+            exit 1
+        fi
+    else
+        # Local path — accept either the tools dir or the script file directly
+        local src_file="$source"
+        if [ -d "$source" ]; then
+            src_file="$source/pep-tools.sh"
+        fi
+        if [ ! -f "$src_file" ]; then
+            log "ERROR" "Source file not found: $src_file"
+            cp "$backup" "$dest"
+            exit 1
+        fi
+        cp "$src_file" "$dest"
+    fi
+
+    chmod +x "$dest"
+    log "INFO" "Updated $dest from $source"
+
+    # Persist source into .peprc if requested or not already set
+    if $save_source || [ -z "${PEP_FRAMEWORK_SOURCE:-}" ]; then
+        if grep -q "PEP_FRAMEWORK_SOURCE" "$CONFIG_FILE" 2>/dev/null; then
+            sed -i.bak "s|PEP_FRAMEWORK_SOURCE=.*|PEP_FRAMEWORK_SOURCE=\"$source\"|" "$CONFIG_FILE"
+        else
+            echo "PEP_FRAMEWORK_SOURCE=\"$source\"" >> "$CONFIG_FILE"
+        fi
+        log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $CONFIG_FILE"
     fi
 }
 
@@ -417,7 +489,8 @@ ${GREEN}Commands:${NC}
   ${YELLOW}new-blog${NC} [blog-num] [pep-num]  Create implementation blog for PEP
   ${YELLOW}list${NC}                           List all PEPs with status
   ${YELLOW}status${NC}                         Show status summary
-  ${YELLOW}help${NC}                           Show this help message
+  ${YELLOW}update-tools${NC} [--source <path|url>]  Update pep-tools.sh from source
+  ${YELLOW}help${NC}                                Show this help message
 
 ${GREEN}Examples:${NC}
   $0 init
@@ -426,9 +499,12 @@ ${GREEN}Examples:${NC}
   $0 new-blog 3 5
   $0 list
   $0 status
+  $0 update-tools --source /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
+  $0 update-tools  # uses PEP_FRAMEWORK_SOURCE from .peprc
 
 ${GREEN}Configuration:${NC}
   Edit ${YELLOW}.peprc${NC} to customize author, editor, and other settings.
+  Set ${YELLOW}PEP_FRAMEWORK_SOURCE${NC} in .peprc to avoid specifying --source each time.
 
 ${GREEN}Git Integration:${NC}
   Use branch naming: ${YELLOW}feature/pep-XXX-description${NC}
@@ -454,6 +530,10 @@ main() {
             ;;
         "status")
             show_status
+            ;;
+        "update-tools")
+            shift
+            update_tools "$@"
             ;;
         "help"|"-h"|"--help")
             show_help
