@@ -225,7 +225,8 @@ create_pep() {
     echo -n "Priority [H)igh / M)edium / L)ow, default M]: "
     read -r priority_choice
     local pep_priority
-    case "${priority_choice,,}" in
+    priority_choice="$(echo "$priority_choice" | tr '[:upper:]' '[:lower:]')"
+    case "$priority_choice" in
         h|high) pep_priority="High" ;;
         l|low)  pep_priority="Low" ;;
         *)      pep_priority="Medium" ;;
@@ -337,7 +338,8 @@ new_branch() {
         log "WARN" "Branch already exists: $branch_name"
         echo -n "Switch to it? [Y/n]: "
         read -r response
-        if [[ ! "${response,,}" =~ ^n ]]; then
+        response="$(echo "$response" | tr '[:upper:]' '[:lower:]')"
+        if [[ ! "$response" =~ ^n ]]; then
             git checkout "$branch_name"
             log "INFO" "Switched to: $branch_name"
         fi

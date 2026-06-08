@@ -193,7 +193,8 @@ get_user_input() {
 
     echo -n "Enable blogs (Build Logs) feature? [Y/n]: "
     read -r enable_blogs_choice
-    if [[ "${enable_blogs_choice,,}" =~ ^n ]]; then
+    enable_blogs_choice="$(echo "$enable_blogs_choice" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$enable_blogs_choice" =~ ^n ]]; then
         ENABLE_BLOGS="n"
     else
         ENABLE_BLOGS="y"
