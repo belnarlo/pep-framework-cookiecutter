@@ -40,6 +40,17 @@ def setup_permissions():
     # Also fix any other shell scripts
     run_command("find . -name '*.sh' -type f -exec chmod +x {} +", "Made all .sh files executable", fail_ok=True)
 
+def cleanup_optional_features():
+    """Remove directories for features the user opted out of."""
+    use_blogs = "{{ cookiecutter.use_blogs }}"
+
+    if use_blogs.lower() != 'y' and os.path.isdir('docs/blogs'):
+        contents = [f for f in os.listdir('docs/blogs') if f != '.gitkeep']
+        if not contents:
+            run_command("rm -rf docs/blogs", "Removed docs/blogs (blogs feature disabled)")
+        else:
+            print("⚠ docs/blogs is not empty, leaving it in place despite blogs being disabled")
+
 def setup_git():
     """Initialize git repository if needed."""
     print("Setting up git integration...")
@@ -77,6 +88,7 @@ def show_next_steps():
     project_name = "{{ cookiecutter.project_name }}"
     project_slug = "{{ cookiecutter.project_slug }}"
     use_git_hooks = "{{ cookiecutter.use_git_hooks }}"
+    use_blogs = "{{ cookiecutter.use_blogs }}"
     
     print("\n" + "="*60)
     print(f"🎉 {project_name} is ready!")
@@ -109,7 +121,8 @@ def show_next_steps():
     print("   2. git checkout -b feature/pep-002-new-feature")
     print("   3. # Make changes...")
     print("   4. git commit -m 'pep-002: Implement new feature'")
-    print("   5. ./tools/pep-tools.sh new-blog 1 2")
+    if use_blogs.lower() == 'y':
+        print("   5. ./tools/pep-tools.sh new-blog 1 2")
 
 def main():
     """Main setup function."""
@@ -119,7 +132,10 @@ def main():
     try:
         setup_permissions()
         print()
-        
+
+        cleanup_optional_features()
+        print()
+
         setup_git()
         print()
         

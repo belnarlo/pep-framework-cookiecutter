@@ -705,6 +705,17 @@ install_framework() {
         exit 1
     fi
 
+    # Remove docs/blogs if the user opted out of the blogs feature
+    # (only when it's still empty, so we don't clobber existing blog entries on a re-run)
+    if [ "$ENABLE_BLOGS" = "n" ] && [ -d "$original_dir/docs/blogs" ]; then
+        if [ -z "$(find "$original_dir/docs/blogs" -mindepth 1 ! -name '.gitkeep')" ]; then
+            rm -rf "$original_dir/docs/blogs"
+            log "INFO" "Removed docs/blogs (blogs feature disabled)"
+        else
+            log "WARN" "docs/blogs is not empty, leaving it in place despite blogs being disabled"
+        fi
+    fi
+
     # Customise .peprc with project-level settings
     if [ -f ".peprc" ]; then
         sed -i.bak "s/PROJECT_NAME=.*/PROJECT_NAME=\"$PROJECT_NAME\"/" .peprc
