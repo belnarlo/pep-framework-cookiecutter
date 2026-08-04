@@ -81,16 +81,17 @@ function Get-FilePrefix {
 }
 
 # Returns the display ID used in file content, list, and commit messages
+# e.g. "PEP-PE-MON-001"  /  "PEP-001"
 function Get-PepId {
     param([int]$Num)
     $project = $script:PROJECT_CODE
     $repo = $script:REPO_CODE
     if ($project -and $repo) {
-        return "{0}-{1}-PEP-{2:D3}" -f $project, $repo, $Num
+        return "PEP-{0}-{1}-{2:D3}" -f $project, $repo, $Num
     } elseif ($repo) {
-        return "{0}-PEP-{1:D3}" -f $repo, $Num
+        return "PEP-{0}-{1:D3}" -f $repo, $Num
     } elseif ($project) {
-        return "{0}-PEP-{1:D3}" -f $project, $Num
+        return "PEP-{0}-{1:D3}" -f $project, $Num
     } else {
         return "PEP-{0:D3}" -f $Num
     }
@@ -340,7 +341,7 @@ function New-PepBranch {
     param([string[]]$Arguments)
 
     $pepRef = $Arguments[0]
-    if (-not $pepRef) { $pepRef = Read-Host "Enter PEP number or ID (e.g. 3 or PE-MON-PEP-003)" }
+    if (-not $pepRef) { $pepRef = Read-Host "Enter PEP number or ID (e.g. 3 or PEP-PE-MON-003)" }
 
     if ($pepRef -notmatch '(\d+)$') {
         Write-PepLog ERROR "Could not parse PEP number from: $pepRef"
@@ -390,7 +391,7 @@ function Invoke-PepCommit {
         $message = ($Arguments[1..($Arguments.Count - 1)] -join ' ')
     }
 
-    if (-not $pepRef) { $pepRef = Read-Host "Enter PEP number or ID (e.g. 3 or PE-MON-PEP-003)" }
+    if (-not $pepRef) { $pepRef = Read-Host "Enter PEP number or ID (e.g. 3 or PEP-PE-MON-003)" }
     if ($pepRef -notmatch '(\d+)$') {
         Write-PepLog ERROR "Could not parse PEP number from: $pepRef"
         exit 1
@@ -513,11 +514,12 @@ function Invoke-PepMigrate {
 
         if ($dryRun) { continue }
 
-        # Do the global inline "PEP-NNN" -> newPepId replace FIRST. newPepId
-        # itself contains "PEP-NNN" as a substring (e.g. PS-SLT-PEP-001), so
-        # doing the heading/ID-line substitutions first and this global replace
-        # after would match again inside their own output and double the codes
-        # (e.g. PS-SLT-PEP-001 -> PS-SLT-PS-SLT-PEP-001).
+        # Do the global inline "PEP-NNN" -> newPepId replace FIRST. With codes
+        # placed between "PEP" and the number (PEP-CODES-NNN), newPepId no
+        # longer contains the old "PEP-NNN" text as a substring, but keeping
+        # this global replace first is still the safe order in case
+        # PROJECT_CODE/REPO_CODE are both unset (newPepId == "PEP-NNN", i.e.
+        # an idempotent no-op replace).
         $oldRef = "PEP-{0:D3}" -f [int]$num
         $newContent = $content.Replace($oldRef, $newPepId)
 
@@ -828,7 +830,7 @@ function Initialize-PepFramework {
 # PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$projectName"
 
-# PEP identifier codes — combined to build IDs like PROJECT_CODE-REPO_CODE-PEP-001
+# PEP identifier codes — combined to build IDs like PEP-PROJECT_CODE-REPO_CODE-001
 # Leave blank to fall back to the default PEP-001 format
 PROJECT_CODE=""
 REPO_CODE=""

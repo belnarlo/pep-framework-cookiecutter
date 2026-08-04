@@ -68,18 +68,18 @@ get_file_prefix() {
 }
 
 # Returns the display ID used in file content, list, and commit messages
-# e.g. "PE-MON-PEP-001"  /  "PEP-001"
+# e.g. "PEP-PE-MON-001"  /  "PEP-001"
 get_pep_id() {
     local num="$1"
     local project="${PROJECT_CODE:-}"
     local repo="${REPO_CODE:-}"
 
     if [ -n "$project" ] && [ -n "$repo" ]; then
-        printf "%s-%s-PEP-%03d" "$project" "$repo" "$((10#$num))"
+        printf "PEP-%s-%s-%03d" "$project" "$repo" "$((10#$num))"
     elif [ -n "$repo" ]; then
-        printf "%s-PEP-%03d" "$repo" "$((10#$num))"
+        printf "PEP-%s-%03d" "$repo" "$((10#$num))"
     elif [ -n "$project" ]; then
-        printf "%s-PEP-%03d" "$project" "$((10#$num))"
+        printf "PEP-%s-%03d" "$project" "$((10#$num))"
     else
         printf "PEP-%03d" "$((10#$num))"
     fi
@@ -321,7 +321,7 @@ new_branch() {
     local pep_ref="${1:-}"
 
     if [ -z "$pep_ref" ]; then
-        echo -n "Enter PEP number or ID (e.g. 3 or PE-MON-PEP-003): "
+        echo -n "Enter PEP number or ID (e.g. 3 or PEP-PE-MON-003): "
         read -r pep_ref
     fi
 
@@ -381,7 +381,7 @@ commit_pep() {
     fi
 
     if [ -z "$pep_ref" ]; then
-        echo -n "Enter PEP number or ID (e.g. 3 or PE-MON-PEP-003): "
+        echo -n "Enter PEP number or ID (e.g. 3 or PEP-PE-MON-003): "
         read -r pep_ref
     fi
 
@@ -544,17 +544,17 @@ migrate_peps() {
 
         cp "$pep" "$new_filename"
 
-        # Replace inline PEP-NNN references throughout the document FIRST.
-        # This must run before the targeted heading/ID substitutions below:
-        # new_pep_id (e.g. PS-SLT-PEP-001) contains the old "PEP-NNN" text as a
-        # substring, so if the heading/ID line were rewritten first, this global
-        # replace would match again inside its own output and double the codes
-        # (e.g. PS-SLT-PEP-001 -> PS-SLT-PS-SLT-PEP-001).
+        # Replace inline PEP-NNN references throughout the document FIRST, before
+        # the targeted heading/ID substitutions below. With codes placed between
+        # "PEP" and the number (PEP-CODES-NNN), new_pep_id no longer contains the
+        # old "PEP-NNN" text as a substring, but keeping this global replace first
+        # is still the safe order in case PROJECT_CODE/REPO_CODE are both unset
+        # (new_pep_id == "PEP-NNN", i.e. an idempotent no-op replace).
         sed -i.bak "s|PEP-$(printf "%03d" "$((10#$num))")|${new_pep_id}|g" "$new_filename"
-        # Update heading:  # PEP-001: Title  →  # PE-MON-PEP-001: Title
+        # Update heading:  # PEP-001: Title  →  # PEP-PE-MON-001: Title
         # (no-op if the line above already rewrote it)
         sed -i.bak "s|^# PEP-${num}: |# ${new_pep_id}: |" "$new_filename"
-        # Update **PEP:** NNN  →  **ID:** PE-MON-PEP-001
+        # Update **PEP:** NNN  →  **ID:** PEP-PE-MON-001
         sed -i.bak "s|^\*\*PEP:\*\* ${num}[[:space:]]*$|**ID:** ${new_pep_id}|" "$new_filename"
         # Replace any existing **ID:** line
         sed -i.bak "s|^\*\*ID:\*\*.*|**ID:** ${new_pep_id}|" "$new_filename"
@@ -892,7 +892,7 @@ init_framework() {
 # PEP Framework Configuration — project-level settings (commit this file)
 PROJECT_NAME="$(basename "$(pwd)")"
 
-# PEP identifier codes — combined to build IDs like PROJECT_CODE-REPO_CODE-PEP-001
+# PEP identifier codes — combined to build IDs like PEP-PROJECT_CODE-REPO_CODE-001
 # Leave blank to fall back to the default PEP-001 format
 PROJECT_CODE=""
 REPO_CODE=""

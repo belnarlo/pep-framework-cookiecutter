@@ -58,8 +58,8 @@ PEP identifiers are built from your `PROJECT_CODE`, `REPO_CODE`, and a sequence 
 
 | Config | Display ID | Filename |
 |--------|-----------|----------|
-| `PROJECT_CODE=PE`, `REPO_CODE=MON` | `PE-MON-PEP-003` | `pep-pe-mon-003-feat-monitoring-setup.md` |
-| `REPO_CODE=MON` only | `MON-PEP-003` | `pep-mon-003-feat-monitoring-setup.md` |
+| `PROJECT_CODE=PE`, `REPO_CODE=MON` | `PEP-PE-MON-003` | `pep-pe-mon-003-feat-monitoring-setup.md` |
+| `REPO_CODE=MON` only | `PEP-MON-003` | `pep-mon-003-feat-monitoring-setup.md` |
 | Neither set | `PEP-003` | `pep-003-feat-monitoring-setup.md` |
 
 **10 PEP types**, each with a short slug embedded in the filename:

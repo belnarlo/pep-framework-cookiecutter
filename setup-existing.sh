@@ -181,7 +181,7 @@ get_user_input() {
     REQUIRE_PEP_REFERENCE=${REQUIRE_PEP_REFERENCE:-n}
     
     echo ""
-    echo "PEP identifier codes (used to build IDs like PROJECT_CODE-REPO_CODE-001):"
+    echo "PEP identifier codes (used to build IDs like PEP-PROJECT_CODE-REPO_CODE-001):"
     echo "  Leave blank to use the default 'PEP' prefix (e.g. PEP-001)"
     echo -n "Project code (short uppercase, e.g. 'PE' for Platform Engineering) [none]: "
     read -r PROJECT_CODE

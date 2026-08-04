@@ -1,6 +1,6 @@
-# PE-MON-PEP-001: Project Foundation
+# PEP-PE-MON-001: Project Foundation
 
-**ID:** PE-MON-PEP-001  
+**ID:** PEP-PE-MON-001  
 **Title:** Project Foundation  
 **Author:** Your Name  
 **Status:** Draft  
@@ -8,10 +8,10 @@
 **Priority:** High  
 **Created:** 2024-12-23  
 **Updated:** 2024-12-23  
-**Supersedes:** PE-MON-PEP-001 (if applicable)  
-**Superseded-By:** PE-MON-PEP-001 (if applicable)  
+**Supersedes:** PEP-PE-MON-001 (if applicable)  
+**Superseded-By:** PEP-PE-MON-001 (if applicable)  
 
-> **Note:** This sample uses `PROJECT_CODE=PE`, `REPO_CODE=MON` — so the ID is `PE-MON-PEP-001`
+> **Note:** This sample uses `PROJECT_CODE=PE`, `REPO_CODE=MON` — so the ID is `PEP-PE-MON-001`
 > and the file is named `pep-pe-mon-001-proj-project-foundation.md`.  
 > With no codes configured the ID would be `PEP-001` and the file `pep-001-proj-project-foundation.md`.
 
@@ -57,7 +57,7 @@ Without a structured approach to project development, changes tend to be ad-hoc,
 - **Documentation Format:** Markdown for universal compatibility
 - **Version Control:** Git integration with commit message validation
 - **Management Tool:** Bash script for cross-platform compatibility
-- **ID Scheme:** `PROJECT_CODE-REPO_CODE-PEP-NNN` for cross-repo traceability
+- **ID Scheme:** `PEP-PROJECT_CODE-REPO_CODE-NNN` for cross-repo traceability
 
 **Integration Points:**
 - Git hooks for automatic commit validation
@@ -110,7 +110,7 @@ Without a structured approach to project development, changes tend to be ad-hoc,
 ### Context for AI Assistance
 
 ```
-You are helping implement PE-MON-PEP-001: Project Foundation.
+You are helping implement PEP-PE-MON-001: Project Foundation.
 Key requirements:
 - Structured approach to project planning and documentation
 - Git integration with configurable commit prefix (pep-pe-mon-NNN:)
@@ -202,9 +202,9 @@ git commit -m "pep-pe-mon-001: Add git hooks for validation"
 ./tools/pep-tools.sh new-blog 1 1
 
 # Add more PEPs — batch creation, branch later
-./tools/pep-tools.sh new-pep "Monitoring Stack Setup"    # → PE-MON-PEP-002
-./tools/pep-tools.sh new-pep "CI/CD Pipeline"            # → PE-MON-PEP-003
-./tools/pep-tools.sh new-pep "Database Migration"        # → PE-MON-PEP-004
+./tools/pep-tools.sh new-pep "Monitoring Stack Setup"    # → PEP-PE-MON-002
+./tools/pep-tools.sh new-pep "CI/CD Pipeline"            # → PEP-PE-MON-003
+./tools/pep-tools.sh new-pep "Database Migration"        # → PEP-PE-MON-004
 
 # Start work on any of them later
 ./tools/pep-tools.sh new-branch 3

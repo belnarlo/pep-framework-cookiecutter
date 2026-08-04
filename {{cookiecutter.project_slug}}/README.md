@@ -35,15 +35,15 @@
 
 {% set ns = namespace(pep_id="PEP-001", file_prefix="pep-001-feat-slug.md", commit="pep-001: description") %}
 {% if cookiecutter.project_code and cookiecutter.repo_code %}
-{% set ns.pep_id = cookiecutter.project_code + "-" + cookiecutter.repo_code + "-PEP-001" %}
+{% set ns.pep_id = "PEP-" + cookiecutter.project_code + "-" + cookiecutter.repo_code + "-001" %}
 {% set ns.file_prefix = "pep-" + cookiecutter.project_code|lower + "-" + cookiecutter.repo_code|lower + "-001-feat-slug.md" %}
 {% set ns.commit = "pep-" + cookiecutter.project_code|lower + "-" + cookiecutter.repo_code|lower + "-001: description" %}
 {% elif cookiecutter.repo_code %}
-{% set ns.pep_id = cookiecutter.repo_code + "-PEP-001" %}
+{% set ns.pep_id = "PEP-" + cookiecutter.repo_code + "-001" %}
 {% set ns.file_prefix = "pep-" + cookiecutter.repo_code|lower + "-001-feat-slug.md" %}
 {% set ns.commit = "pep-" + cookiecutter.repo_code|lower + "-001: description" %}
 {% elif cookiecutter.project_code %}
-{% set ns.pep_id = cookiecutter.project_code + "-PEP-001" %}
+{% set ns.pep_id = "PEP-" + cookiecutter.project_code + "-001" %}
 {% set ns.file_prefix = "pep-" + cookiecutter.project_code|lower + "-001-feat-slug.md" %}
 {% set ns.commit = "pep-" + cookiecutter.project_code|lower + "-001: description" %}
 {% endif %}
