@@ -102,6 +102,25 @@ get_type_slug() {
     esac
 }
 
+# Extract a metadata field from a PEP file, e.g. get_pep_field "$file" "Status"
+# Trailing whitespace is stripped — template lines end in two spaces (a markdown
+# line break), which would otherwise silently break status/date comparisons.
+get_pep_field() {
+    local file="$1" field="$2"
+    grep "^\*\*${field}:\*\*" "$file" 2>/dev/null | sed "s|^\*\*${field}:\*\* *||; s/\r$//; s/[[:space:]]*$//" | head -1
+}
+
+# Extract the abstract paragraph — the first non-blank line after "## Abstract"
+get_pep_abstract() {
+    local file="$1"
+    awk '/^## Abstract[[:space:]]*$/{flag=1; next} /^## /{flag=0} flag && NF {print; exit}' "$file" 2>/dev/null | sed 's/\r$//; s/[[:space:]]*$//'
+}
+
+# Extract the zero-padded 3-digit PEP number from a PEP filename
+get_pep_num_from_file() {
+    basename "$1" | grep -oE '[0-9]{3}' | head -1
+}
+
 # Ensure required directories exist
 ensure_directories() {
     local dirs=("$PEP_DIR" "$TEMPLATE_DIR" "tools/git-hooks")
@@ -525,7 +544,15 @@ migrate_peps() {
 
         cp "$pep" "$new_filename"
 
+        # Replace inline PEP-NNN references throughout the document FIRST.
+        # This must run before the targeted heading/ID substitutions below:
+        # new_pep_id (e.g. PS-SLT-PEP-001) contains the old "PEP-NNN" text as a
+        # substring, so if the heading/ID line were rewritten first, this global
+        # replace would match again inside its own output and double the codes
+        # (e.g. PS-SLT-PEP-001 -> PS-SLT-PS-SLT-PEP-001).
+        sed -i.bak "s|PEP-$(printf "%03d" "$((10#$num))")|${new_pep_id}|g" "$new_filename"
         # Update heading:  # PEP-001: Title  →  # PE-MON-PEP-001: Title
+        # (no-op if the line above already rewrote it)
         sed -i.bak "s|^# PEP-${num}: |# ${new_pep_id}: |" "$new_filename"
         # Update **PEP:** NNN  →  **ID:** PE-MON-PEP-001
         sed -i.bak "s|^\*\*PEP:\*\* ${num}[[:space:]]*$|**ID:** ${new_pep_id}|" "$new_filename"
@@ -540,8 +567,6 @@ migrate_peps() {
             awk '/^\*\*Type:\*\*/{print; print "**Priority:** Medium"; next}1' \
                 "$new_filename" > "${new_filename}.tmp" && mv "${new_filename}.tmp" "$new_filename"
         fi
-        # Replace inline PEP-NNN references throughout the document
-        sed -i.bak "s|PEP-$(printf "%03d" "$((10#$num))")|${new_pep_id}|g" "$new_filename"
 
         rm -f "${new_filename}.bak"
         rm "$pep"
@@ -645,18 +670,18 @@ list_peps() {
         found=true
 
         local raw_num
-        raw_num=$(basename "$pep" | grep -oE '[0-9]{3}' | head -1)
+        raw_num=$(get_pep_num_from_file "$pep")
         local pep_id
         pep_id=$(get_pep_id "$((10#$raw_num))")
 
         local title
-        title=$(grep "^\*\*Title:\*\*" "$pep" | sed 's/\*\*Title:\*\* //' | head -1)
+        title=$(get_pep_field "$pep" "Title")
         local status
-        status=$(grep "^\*\*Status:\*\*" "$pep" | sed 's/\*\*Status:\*\* //' | head -1)
+        status=$(get_pep_field "$pep" "Status")
         local pep_type
-        pep_type=$(grep "^\*\*Type:\*\*" "$pep" | sed 's/\*\*Type:\*\* //' | head -1)
+        pep_type=$(get_pep_field "$pep" "Type")
         local author
-        author=$(grep "^\*\*Author:\*\*" "$pep" | sed 's/\*\*Author:\*\* //' | head -1)
+        author=$(get_pep_field "$pep" "Author")
 
         local status_color
         case "$status" in
@@ -675,12 +700,28 @@ list_peps() {
     fi
 }
 
-# Show status summary
+# Show status summary, unexpected-status flags, grouped-by-status listing,
+# and (with --since) a changes-since-date section — built for meeting prep.
 show_status() {
+    local since=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --since) since="$2"; shift 2 ;;
+            *) log "ERROR" "Unknown option: $1"; log "INFO" "Usage: $0 status [--since YYYY-MM-DD]"; exit 1 ;;
+        esac
+    done
+
+    if [ -n "$since" ] && ! [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        log "ERROR" "--since expects a date in YYYY-MM-DD format"
+        exit 1
+    fi
+
     if [ ! -d "$PEP_DIR" ]; then
         log "WARN" "PEP directory does not exist: $PEP_DIR"
         return
     fi
+
+    local known_statuses=("Draft" "Active" "Implemented" "Rejected" "Superseded")
 
     local example_id
     example_id=$(get_pep_id 1)
@@ -688,7 +729,7 @@ show_status() {
     echo "============================================="
 
     local total=0
-    for status in Draft Active Implemented Rejected Superseded; do
+    for status in "${known_statuses[@]}"; do
         local count
         count=$(grep -rl "^\*\*Status:\*\* $status" "$PEP_DIR"/pep-*.md 2>/dev/null | wc -l | tr -d ' ')
         printf "%-12s: %d\n" "$status" "$count"
@@ -697,6 +738,147 @@ show_status() {
 
     echo "-------------"
     printf "%-12s: %d\n" "Total" "$total"
+
+    # Flag PEPs whose status doesn't match one of the known values (typos, blank, etc.)
+    local unexpected=()
+    for pep in "$PEP_DIR"/pep-*.md; do
+        [ -f "$pep" ] || continue
+        local status
+        status=$(get_pep_field "$pep" "Status")
+        local known=false
+        for k in "${known_statuses[@]}"; do
+            if [ "$status" = "$k" ]; then
+                known=true
+                break
+            fi
+        done
+        if [ "$known" = false ]; then
+            unexpected+=("$pep")
+        fi
+    done
+
+    if [ ${#unexpected[@]} -gt 0 ]; then
+        echo ""
+        echo -e "${RED}⚠ PEPs with unexpected or missing status (needs fixing):${NC}"
+        for pep in "${unexpected[@]}"; do
+            local num pep_id status
+            num=$(get_pep_num_from_file "$pep")
+            pep_id=$(get_pep_id "$((10#$num))")
+            status=$(get_pep_field "$pep" "Status")
+            printf "  %-20s %-20s %s\n" "$pep_id" "${status:-<none>}" "$pep"
+        done
+    fi
+
+    # Grouped listing by status, with ID + title + abstract — formatted for
+    # copy/paste directly into meeting notes.
+    echo ""
+    echo -e "${BLUE}PEPs by Status${NC}"
+    echo "=============="
+    for status in "${known_statuses[@]}"; do
+        local files=()
+        for pep in "$PEP_DIR"/pep-*.md; do
+            [ -f "$pep" ] || continue
+            [ "$(get_pep_field "$pep" "Status")" = "$status" ] && files+=("$pep")
+        done
+        [ ${#files[@]} -eq 0 ] && continue
+
+        echo ""
+        echo "## $status (${#files[@]})"
+        for pep in "${files[@]}"; do
+            local num pep_id title abstract
+            num=$(get_pep_num_from_file "$pep")
+            pep_id=$(get_pep_id "$((10#$num))")
+            title=$(get_pep_field "$pep" "Title")
+            abstract=$(get_pep_abstract "$pep")
+            echo "- ${pep_id}: ${title}"
+            [ -n "$abstract" ] && echo "    ${abstract}"
+        done
+    done
+
+    # Changes since a given date — new PEPs, completed PEPs, and other updates.
+    # Uses the Created/Updated fields already captured on every PEP; there's no
+    # separate change log, so "completed"/"updated" are inferred from Status +
+    # Updated date rather than a true history of status transitions.
+    if [ -n "$since" ]; then
+        echo ""
+        echo -e "${BLUE}Changes since ${since}${NC}"
+        echo "============================="
+
+        local raised=() completed=() updated=()
+        for pep in "$PEP_DIR"/pep-*.md; do
+            [ -f "$pep" ] || continue
+            local created upd status is_new is_terminal
+            created=$(get_pep_field "$pep" "Created")
+            upd=$(get_pep_field "$pep" "Updated")
+            status=$(get_pep_field "$pep" "Status")
+
+            is_new=false
+            if [ -n "$created" ] && [[ ! "$created" < "$since" ]]; then
+                raised+=("$pep")
+                is_new=true
+            fi
+
+            is_terminal=false
+            case "$status" in
+                Implemented|Rejected|Superseded) is_terminal=true ;;
+            esac
+
+            if [ -n "$upd" ] && [[ ! "$upd" < "$since" ]]; then
+                if [ "$is_terminal" = true ]; then
+                    completed+=("$pep")
+                elif [ "$is_new" = false ]; then
+                    updated+=("$pep")
+                fi
+            fi
+        done
+
+        echo ""
+        echo "New PEPs raised (${#raised[@]}):"
+        if [ ${#raised[@]} -eq 0 ]; then
+            echo "  None"
+        else
+            for pep in "${raised[@]}"; do
+                local num pep_id title created
+                num=$(get_pep_num_from_file "$pep")
+                pep_id=$(get_pep_id "$((10#$num))")
+                title=$(get_pep_field "$pep" "Title")
+                created=$(get_pep_field "$pep" "Created")
+                echo "  - ${pep_id}: ${title} (created ${created})"
+            done
+        fi
+
+        echo ""
+        echo "Completed (${#completed[@]}):"
+        if [ ${#completed[@]} -eq 0 ]; then
+            echo "  None"
+        else
+            for pep in "${completed[@]}"; do
+                local num pep_id title status upd
+                num=$(get_pep_num_from_file "$pep")
+                pep_id=$(get_pep_id "$((10#$num))")
+                title=$(get_pep_field "$pep" "Title")
+                status=$(get_pep_field "$pep" "Status")
+                upd=$(get_pep_field "$pep" "Updated")
+                echo "  - ${pep_id}: ${title} — now ${status} (updated ${upd})"
+            done
+        fi
+
+        echo ""
+        echo "Other updates (${#updated[@]}):"
+        if [ ${#updated[@]} -eq 0 ]; then
+            echo "  None"
+        else
+            for pep in "${updated[@]}"; do
+                local num pep_id title status upd
+                num=$(get_pep_num_from_file "$pep")
+                pep_id=$(get_pep_id "$((10#$num))")
+                title=$(get_pep_field "$pep" "Title")
+                status=$(get_pep_field "$pep" "Status")
+                upd=$(get_pep_field "$pep" "Updated")
+                echo "  - ${pep_id}: ${title} — ${status} (updated ${upd})"
+            done
+        fi
+    fi
 }
 
 # Initialize PEP framework in current directory
@@ -925,7 +1107,9 @@ ${GREEN}PEP commands:${NC}
   ${YELLOW}commit${NC} <pep-num> [message]              Commit with correct PEP message format
 $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [pep-num]         Create implementation blog for a PEP")
   ${YELLOW}list${NC}                                    List all PEPs with status
-  ${YELLOW}status${NC}                                  Show status summary
+  ${YELLOW}status${NC} [--since YYYY-MM-DD]              Status summary, by-status listing (copy/paste-ready),
+                                               flags PEPs with an unexpected/missing status, and with
+                                               --since adds a Changes section (raised/completed/updated)
   ${YELLOW}migrate${NC} [--dry-run]                     Rename existing PEPs to current naming scheme
 
 ${GREEN}Framework commands:${NC}
@@ -939,6 +1123,7 @@ ${GREEN}Examples:${NC}
   $0 new-branch 5                            # create feature/pep-...-005-... branch
   $0 commit 5 "Add Prometheus scrape config" # commit with correct prefix
 $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                           # create blog-003 for pep-005")
+  $0 status --since 2026-07-01                # meeting prep: summary + by-status list + changes since date
   $0 migrate --dry-run                       # preview rename of old-format PEPs
   $0 migrate                                 # apply rename
   $0 update-tools --source /path/to/cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
@@ -984,7 +1169,8 @@ main() {
             list_peps
             ;;
         "status")
-            show_status
+            shift
+            show_status "$@"
             ;;
         "migrate")
             shift

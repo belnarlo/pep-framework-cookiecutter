@@ -31,6 +31,7 @@
     ],
     "_copy_without_render": [
         "*.sh",
+        "*.ps1",
         "tools/git-hooks/commit-msg",
         "tools/pep-tools.sh"
     ],

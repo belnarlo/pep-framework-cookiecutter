@@ -27,6 +27,8 @@
 ./tools/pep-tools.sh help
 ```
 
+> **Windows:** use `tools/pep-tools.ps1` instead — same commands, same output, e.g. `.\tools\pep-tools.ps1 new-pep "Project Foundation"`.
+
 ---
 
 ## PEP Naming in This Repo
@@ -192,7 +194,8 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 ./tools/pep-tools.sh new-branch [pep-num]         # Create feature branch
 ./tools/pep-tools.sh commit <pep-num> [message]   # Commit with correct prefix
 ./tools/pep-tools.sh list                         # List all PEPs
-./tools/pep-tools.sh status                       # Status summary
+./tools/pep-tools.sh status [--since YYYY-MM-DD]  # Status summary, by-status listing, flags bad
+                                                   # statuses, and (with --since) a changes report
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename PEPs to current scheme
 
 {% if cookiecutter.use_blogs == 'y' %}
@@ -205,6 +208,8 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates
 ./tools/pep-tools.sh help                         # Full help
 ```
+
+On Windows, use `tools/pep-tools.ps1` with the same commands and arguments (e.g. `.\tools\pep-tools.ps1 status --since 2026-07-01`).
 
 ---
 
