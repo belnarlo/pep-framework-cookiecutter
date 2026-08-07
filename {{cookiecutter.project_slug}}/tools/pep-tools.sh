@@ -590,6 +590,87 @@ migrate_peps() {
     fi
 }
 
+# Repair PEP docs written by the pre-fix get_pep_id(), which put the codes
+# before the literal "PEP" (e.g. "PS-SLT-PEP-003" instead of "PEP-PS-SLT-003").
+# Filenames were never affected — only the "**ID:**" line, the heading, and any
+# other inline references inside the document content.
+fix_naming() {
+    local dry_run=false
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log "ERROR" "Unknown option: $1"; log "INFO" "Usage: $0 fix-naming [--dry-run]"; exit 1 ;;
+        esac
+    done
+
+    if [ ! -d "$PEP_DIR" ]; then
+        log "WARN" "PEP directory not found: $PEP_DIR"
+        return
+    fi
+
+    local project="${PROJECT_CODE:-}"
+    local repo="${REPO_CODE:-}"
+
+    if [ -z "$project" ] && [ -z "$repo" ]; then
+        log "INFO" "No PROJECT_CODE/REPO_CODE configured — the old bug only affected IDs built from those codes. Nothing to fix."
+        return
+    fi
+
+    # Match the broken pattern by regex rather than a fixed number, since
+    # Supersedes/Superseded-By lines can reference a *different* PEP number
+    # than the file's own — a single-number match would miss those.
+    local broken_pattern replacement
+    if [ -n "$project" ] && [ -n "$repo" ]; then
+        broken_pattern="${project}-${repo}-PEP-([0-9]{3})"
+        replacement="PEP-${project}-${repo}-\\1"
+    elif [ -n "$repo" ]; then
+        broken_pattern="${repo}-PEP-([0-9]{3})"
+        replacement="PEP-${repo}-\\1"
+    else
+        broken_pattern="${project}-PEP-([0-9]{3})"
+        replacement="PEP-${project}-\\1"
+    fi
+
+    local fixed=0 skipped=0
+
+    for pep in "$PEP_DIR"/pep-*.md; do
+        [ -f "$pep" ] || continue
+
+        if ! grep -qE -- "$broken_pattern" "$pep"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        local hits
+        hits=$(grep -oE -- "$broken_pattern" "$pep" | sort -u | tr '\n' ' ')
+        log "INFO" "$(basename "$pep"): $hits"
+
+        if $dry_run; then
+            fixed=$((fixed + 1))
+            continue
+        fi
+
+        sed -i.bak -E "s|${broken_pattern}|${replacement}|g" "$pep"
+        rm -f "${pep}.bak"
+        fixed=$((fixed + 1))
+    done
+
+    if [ $((fixed + skipped)) -eq 0 ]; then
+        log "INFO" "No PEP files found"
+        return
+    fi
+
+    if $dry_run; then
+        log "INFO" "Dry run: $fixed file(s) would be fixed, $skipped already correct"
+    else
+        log "INFO" "Done: $fixed file(s) fixed, $skipped already correct"
+        if [ "$fixed" -gt 0 ] && [ -d ".git" ]; then
+            log "INFO" "Review the changes then commit: git add -A && git commit -m 'chore: fix PEP ID naming order'"
+        fi
+    fi
+}
+
 # Create a new BLOG
 create_blog() {
     if [ "${ENABLE_BLOGS:-y}" != "y" ]; then
@@ -1111,6 +1192,7 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [p
                                                flags PEPs with an unexpected/missing status, and with
                                                --since adds a Changes section (raised/completed/updated)
   ${YELLOW}migrate${NC} [--dry-run]                     Rename existing PEPs to current naming scheme
+  ${YELLOW}fix-naming${NC} [--dry-run]                  Repair PEPs written with the old CODES-PEP-NNN ID order
 
 ${GREEN}Framework commands:${NC}
   ${YELLOW}init${NC}                                    Initialize PEP framework in current directory
@@ -1126,6 +1208,8 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                     
   $0 status --since 2026-07-01                # meeting prep: summary + by-status list + changes since date
   $0 migrate --dry-run                       # preview rename of old-format PEPs
   $0 migrate                                 # apply rename
+  $0 fix-naming --dry-run                    # preview repair of PS-SLT-PEP-NNN style IDs
+  $0 fix-naming                              # apply repair
   $0 update-tools --source /path/to/cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
   $0 update-templates                        # uses PEP_FRAMEWORK_SOURCE from .peprc.local
 
@@ -1175,6 +1259,10 @@ main() {
         "migrate")
             shift
             migrate_peps "$@"
+            ;;
+        "fix-naming")
+            shift
+            fix_naming "$@"
             ;;
         "update-tools")
             shift

@@ -561,6 +561,84 @@ function Invoke-PepMigrate {
 }
 
 # ----------------------------------------------------------------------------
+# Repair PEP docs written by the pre-fix Get-PepId, which put the codes before
+# the literal "PEP" (e.g. "PS-SLT-PEP-003" instead of "PEP-PS-SLT-003").
+# Filenames were never affected — only the "**ID:**" line, the heading, and any
+# other inline references inside the document content.
+# ----------------------------------------------------------------------------
+function Invoke-PepFixNaming {
+    param([string[]]$Arguments)
+
+    $dryRun = $Arguments -contains "--dry-run"
+
+    if (-not (Test-Path $script:PEP_DIR)) {
+        Write-PepLog WARN "PEP directory not found: $($script:PEP_DIR)"
+        return
+    }
+
+    $project = $script:PROJECT_CODE
+    $repo = $script:REPO_CODE
+
+    if (-not $project -and -not $repo) {
+        Write-PepLog INFO "No PROJECT_CODE/REPO_CODE configured — the old bug only affected IDs built from those codes. Nothing to fix."
+        return
+    }
+
+    # Match the broken pattern by regex rather than a fixed number, since
+    # Supersedes/Superseded-By lines can reference a *different* PEP number
+    # than the file's own — a single-number match would miss those.
+    if ($project -and $repo) {
+        $brokenPattern = "$project-$repo-PEP-(\d{3})"
+        $replacement = "PEP-$project-$repo-`$1"
+    } elseif ($repo) {
+        $brokenPattern = "$repo-PEP-(\d{3})"
+        $replacement = "PEP-$repo-`$1"
+    } else {
+        $brokenPattern = "$project-PEP-(\d{3})"
+        $replacement = "PEP-$project-`$1"
+    }
+
+    $fixed = 0
+    $skipped = 0
+
+    $pepFiles = Get-ChildItem -Path $script:PEP_DIR -Filter "pep-*.md" -File -ErrorAction SilentlyContinue
+    foreach ($pep in $pepFiles) {
+        $content = Get-Content -Path $pep.FullName -Raw
+        $hits = [regex]::Matches($content, $brokenPattern) | ForEach-Object { $_.Value } | Select-Object -Unique
+
+        if (-not $hits) {
+            $skipped++
+            continue
+        }
+
+        Write-PepLog INFO "$($pep.Name): $($hits -join ' ')"
+
+        if ($dryRun) {
+            $fixed++
+            continue
+        }
+
+        $newContent = [regex]::Replace($content, $brokenPattern, $replacement)
+        Set-Content -Path $pep.FullName -Value $newContent -NoNewline
+        $fixed++
+    }
+
+    if (($fixed + $skipped) -eq 0) {
+        Write-PepLog INFO "No PEP files found"
+        return
+    }
+
+    if ($dryRun) {
+        Write-PepLog INFO "Dry run: $fixed file(s) would be fixed, $skipped already correct"
+    } else {
+        Write-PepLog INFO "Done: $fixed file(s) fixed, $skipped already correct"
+        if ($fixed -gt 0 -and (Test-Path ".git")) {
+            Write-PepLog INFO "Review the changes then commit: git add -A; git commit -m 'chore: fix PEP ID naming order'"
+        }
+    }
+}
+
+# ----------------------------------------------------------------------------
 # Create a new BLOG
 # ----------------------------------------------------------------------------
 function New-PepBlog {
@@ -1041,6 +1119,7 @@ function Show-PepHelp {
     Write-Host "                                          flags PEPs with an unexpected/missing status, and with"
     Write-Host "                                          --since adds a Changes section (raised/completed/updated)"
     Write-Host "  migrate [--dry-run]                    Rename existing PEPs to current naming scheme"
+    Write-Host "  fix-naming [--dry-run]                 Repair PEPs written with the old CODES-PEP-NNN ID order"
     Write-Host ""
     Write-Host "Framework commands:" -ForegroundColor Green
     Write-Host "  init                                    Initialize PEP framework in current directory"
@@ -1058,6 +1137,8 @@ function Show-PepHelp {
     }
     Write-Host "  .\tools\pep-tools.ps1 migrate --dry-run"
     Write-Host "  .\tools\pep-tools.ps1 migrate"
+    Write-Host "  .\tools\pep-tools.ps1 fix-naming --dry-run"
+    Write-Host "  .\tools\pep-tools.ps1 fix-naming"
     Write-Host "  .\tools\pep-tools.ps1 update-tools --source \path\to\cookiecutter\{{cookiecutter.project_slug}}\tools"
     Write-Host "  .\tools\pep-tools.ps1 update-templates"
     Write-Host ""
@@ -1087,6 +1168,7 @@ switch ($Command) {
     "list"             { Show-PepList }
     "status"           { Show-PepStatus -Arguments $Rest }
     "migrate"          { Invoke-PepMigrate -Arguments $Rest }
+    "fix-naming"       { Invoke-PepFixNaming -Arguments $Rest }
     "update-tools"     { Update-PepTools -Arguments $Rest }
     "update-templates" { Update-PepTemplates -Arguments $Rest }
     "help"             { Show-PepHelp }
