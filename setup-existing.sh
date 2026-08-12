@@ -112,6 +112,7 @@ get_user_input() {
         ENABLE_BLOGS="y"
         ZABBIX_HOST=""
         GRAFANA_URL=""
+        INCLUDE_AI_BLOCK="n"
         return
     fi
     
@@ -205,6 +206,15 @@ get_user_input() {
 
     echo -n "Grafana URL (optional): "
     read -r GRAFANA_URL
+
+    echo -n "Include AI assistance block (Claude Prompt Context) in the PEP template? [y/N]: "
+    read -r include_ai_choice
+    include_ai_choice="$(echo "$include_ai_choice" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$include_ai_choice" =~ ^y ]]; then
+        INCLUDE_AI_BLOCK="y"
+    else
+        INCLUDE_AI_BLOCK="n"
+    fi
 }
 
 download_framework() {
@@ -714,6 +724,14 @@ install_framework() {
         else
             log "WARN" "docs/blogs is not empty, leaving it in place despite blogs being disabled"
         fi
+    fi
+
+    # Select which PEP template variant (with/without the AI block) becomes active.
+    # Both variants are copied in alongside pep-template.md; this just picks the
+    # starting one. Switch anytime with: ./tools/pep-tools.sh ai-block on|off
+    if [ "${INCLUDE_AI_BLOCK:-n}" = "y" ] && [ -f "$original_dir/docs/templates/pep-template-ai.md" ]; then
+        cp "$original_dir/docs/templates/pep-template-ai.md" "$original_dir/docs/templates/pep-template.md"
+        log "INFO" "Enabled AI block in docs/templates/pep-template.md"
     fi
 
     # Customise .peprc with project-level settings

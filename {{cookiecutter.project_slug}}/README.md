@@ -196,6 +196,8 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 ./tools/pep-tools.sh list                         # List all PEPs
 ./tools/pep-tools.sh status [--since YYYY-MM-DD]  # Status summary, by-status listing, flags bad
                                                    # statuses, and (with --since) a changes report
+./tools/pep-tools.sh next                         # Draft/Active PEPs by priority — what to work on next
+./tools/pep-tools.sh stubs [--threshold N]        # PEPs still mostly template boilerplate
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename PEPs to current scheme
 
 {% if cookiecutter.use_blogs == 'y' %}
@@ -204,6 +206,8 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 {% endif %}
 
 # Framework maintenance
+./tools/pep-tools.sh ai-block <on|off|status>     # Switch the PEP template's AI block on/off
+./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
 ./tools/pep-tools.sh update-tools                 # Update pep-tools.sh
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates
 ./tools/pep-tools.sh help                         # Full help
@@ -248,11 +252,26 @@ Git hooks are **enabled** — commit messages are validated automatically.
 
 ## Claude AI Integration
 
+{% if cookiecutter.include_ai_block == 'y' -%}
 Each PEP includes a **Claude Prompt Context** section. To use it:
 
 1. Create a PEP: `./tools/pep-tools.sh new-pep "Your Feature"`
 2. Fill in the context section in the PEP file
 3. Copy that section and paste it into Claude with your request
+
+Don't want it? Switch to the plain template: `./tools/pep-tools.sh ai-block off`. Note this only
+changes the template for *new* PEPs — to remove the section from PEPs that already have it, run
+`./tools/pep-tools.sh strip-ai-block [--dry-run]`.
+{% else -%}
+Not enabled by default in this project. To add a **Claude Prompt Context** section to new PEPs:
+
+```bash
+./tools/pep-tools.sh ai-block on
+```
+
+This swaps `docs/templates/pep-template.md` for the with-AI-block variant (`docs/templates/pep-template-ai.md`).
+Switch back anytime with `./tools/pep-tools.sh ai-block off`, or check the current state with `./tools/pep-tools.sh ai-block status`.
+{% endif -%}
 
 ---
 

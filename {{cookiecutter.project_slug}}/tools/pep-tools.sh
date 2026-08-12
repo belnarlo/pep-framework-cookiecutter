@@ -962,6 +962,235 @@ show_status() {
     fi
 }
 
+# Switch docs/templates/pep-template.md between the with-AI-block and
+# without-AI-block variants (docs/templates/pep-template-ai.md and
+# docs/templates/pep-template-no-ai.md), or report which one is active.
+ai_block() {
+    local action="${1:-status}"
+    local active="${TEMPLATE_DIR}/pep-template.md"
+    local ai_variant="${TEMPLATE_DIR}/pep-template-ai.md"
+    local no_ai_variant="${TEMPLATE_DIR}/pep-template-no-ai.md"
+
+    case "$action" in
+        on|off) ;;
+        status) ;;
+        *)
+            log "ERROR" "Unknown action: $action"
+            log "INFO" "Usage: $0 ai-block <on|off|status>"
+            exit 1
+            ;;
+    esac
+
+    if [ "$action" = "status" ]; then
+        if [ ! -f "$active" ]; then
+            log "WARN" "No active template found: $active"
+            return
+        fi
+        if [ -f "$ai_variant" ] && diff -q "$active" "$ai_variant" >/dev/null 2>&1; then
+            log "INFO" "AI block: on ($active matches pep-template-ai.md)"
+        elif [ -f "$no_ai_variant" ] && diff -q "$active" "$no_ai_variant" >/dev/null 2>&1; then
+            log "INFO" "AI block: off ($active matches pep-template-no-ai.md)"
+        else
+            log "INFO" "AI block: unknown — $active has been customised and no longer matches either variant"
+        fi
+        return
+    fi
+
+    local source_variant="$no_ai_variant"
+    local label="without"
+    if [ "$action" = "on" ]; then
+        source_variant="$ai_variant"
+        label="with"
+    fi
+
+    if [ ! -f "$source_variant" ]; then
+        log "ERROR" "Variant not found: $source_variant"
+        log "INFO" "Run '$0 update-templates' to pull the latest template variants from source"
+        exit 1
+    fi
+
+    cp "$source_variant" "$active"
+    log "INFO" "Switched $active to the $label-AI-block variant"
+    log "WARN" "This overwrote any manual edits to $active — the other variant file was left untouched"
+}
+
+# Strip the "## Claude Prompt Context" section out of existing PEP files.
+# ai-block on/off only swaps the *template* used by new-pep — this cleans up
+# PEPs that were already created while the AI-block template was active.
+strip_ai_block() {
+    local dry_run=false
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run) dry_run=true; shift ;;
+            *) log "ERROR" "Unknown option: $1"; log "INFO" "Usage: $0 strip-ai-block [--dry-run]"; exit 1 ;;
+        esac
+    done
+
+    if [ ! -d "$PEP_DIR" ]; then
+        log "WARN" "PEP directory does not exist: $PEP_DIR"
+        return
+    fi
+
+    local stripped=0 skipped=0
+
+    for pep in "$PEP_DIR"/pep-*.md; do
+        [ -f "$pep" ] || continue
+
+        if ! grep -q '^## Claude Prompt Context[[:space:]]*$' "$pep"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        log "INFO" "$([ "$dry_run" = true ] && echo "Would strip" || echo "Stripping") AI block: $(basename "$pep")"
+        stripped=$((stripped + 1))
+
+        $dry_run && continue
+
+        awk '
+            /^## Claude Prompt Context[[:space:]]*$/ { skip=1; next }
+            skip && /^## / { skip=0 }
+            skip { next }
+            { print }
+        ' "$pep" > "${pep}.tmp" && mv "${pep}.tmp" "$pep"
+    done
+
+    if [ $((stripped + skipped)) -eq 0 ]; then
+        log "INFO" "No PEP files found"
+        return
+    fi
+
+    if $dry_run; then
+        log "INFO" "Dry run: $stripped file(s) would be stripped, $skipped had no AI block"
+    else
+        log "INFO" "Done: $stripped file(s) stripped, $skipped had no AI block"
+        if [ "$stripped" -gt 0 ] && [ -d ".git" ]; then
+            log "INFO" "Review the changes then commit: git add -A && git commit -m 'chore: remove AI block from PEPs'"
+        fi
+    fi
+}
+
+# Show Draft/Active PEPs grouped by priority — a work queue for deciding
+# what to pick up next. Ignores terminal statuses (Implemented/Rejected/
+# Superseded) entirely.
+show_next() {
+    if [ ! -d "$PEP_DIR" ]; then
+        log "WARN" "PEP directory does not exist: $PEP_DIR"
+        return
+    fi
+
+    echo -e "${BLUE}What to work on next (Draft/Active, by priority):${NC}"
+    echo "===================================================="
+
+    local priorities=("High" "Medium" "Low")
+    local any_found=false
+
+    for priority in "${priorities[@]}"; do
+        local files=()
+        for pep in "$PEP_DIR"/pep-*.md; do
+            [ -f "$pep" ] || continue
+            local status
+            status=$(get_pep_field "$pep" "Status")
+            [ "$status" = "Draft" ] || [ "$status" = "Active" ] || continue
+            local pep_priority
+            pep_priority=$(get_pep_field "$pep" "Priority")
+            [ "$pep_priority" = "$priority" ] || continue
+            files+=("$pep")
+        done
+
+        [ ${#files[@]} -eq 0 ] && continue
+        any_found=true
+
+        echo ""
+        echo "## $priority (${#files[@]})"
+        for pep in "${files[@]}"; do
+            local num pep_id title status pep_type abstract
+            num=$(get_pep_num_from_file "$pep")
+            pep_id=$(get_pep_id "$((10#$num))")
+            title=$(get_pep_field "$pep" "Title")
+            status=$(get_pep_field "$pep" "Status")
+            pep_type=$(get_pep_field "$pep" "Type")
+            abstract=$(get_pep_abstract "$pep")
+            echo "- ${pep_id} [${pep_type}] ${title} (${status})"
+            [ -n "$abstract" ] && echo "    ${abstract}"
+        done
+    done
+
+    if [ "$any_found" = false ]; then
+        echo ""
+        echo "Nothing in Draft or Active — nothing queued to work on."
+    fi
+}
+
+# List PEPs whose content is still mostly template boilerplate — i.e. not yet
+# fleshed out. Compares each PEP's body (everything from the first "## "
+# heading onward, so the auto-filled header table doesn't count) against the
+# active template using a line diff; PEPs at or above --threshold percent
+# unchanged are flagged as stubs.
+show_stubs() {
+    local threshold=85
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --threshold) threshold="$2"; shift 2 ;;
+            *) log "ERROR" "Unknown option: $1"; log "INFO" "Usage: $0 stubs [--threshold N]"; exit 1 ;;
+        esac
+    done
+
+    if [ ! -d "$PEP_DIR" ]; then
+        log "WARN" "PEP directory does not exist: $PEP_DIR"
+        return
+    fi
+
+    local template="${TEMPLATE_DIR}/pep-template.md"
+    if [ ! -f "$template" ]; then
+        log "ERROR" "PEP template not found: $template"
+        exit 1
+    fi
+
+    echo -e "${BLUE}PEPs still mostly template boilerplate (>= ${threshold}% unchanged):${NC}"
+    echo "======================================================================"
+
+    local template_body
+    template_body=$(awk '/^## /{body=1} body{print}' "$template")
+    local template_lines
+    template_lines=$(printf '%s\n' "$template_body" | wc -l | tr -d ' ')
+
+    local found=false
+    for pep in "$PEP_DIR"/pep-*.md; do
+        [ -f "$pep" ] || continue
+
+        local file_body
+        file_body=$(awk '/^## /{body=1} body{print}' "$pep")
+
+        # diff exits 1 when the inputs differ and grep -c exits 1 when it finds
+        # no matches (i.e. identical files) — guard both against `set -e`.
+        local diff_lines
+        diff_lines=$( { diff <(printf '%s\n' "$template_body") <(printf '%s\n' "$file_body") || true; } | grep -c '^[<>]' || true)
+        local changed_pairs=$(( (diff_lines + 1) / 2 ))
+
+        local percent_unchanged=100
+        if [ "$template_lines" -gt 0 ]; then
+            percent_unchanged=$(( 100 - (changed_pairs * 100 / template_lines) ))
+            [ "$percent_unchanged" -lt 0 ] && percent_unchanged=0
+        fi
+
+        if [ "$percent_unchanged" -ge "$threshold" ]; then
+            found=true
+            local num pep_id title status
+            num=$(get_pep_num_from_file "$pep")
+            pep_id=$(get_pep_id "$((10#$num))")
+            title=$(get_pep_field "$pep" "Title")
+            status=$(get_pep_field "$pep" "Status")
+            printf "%-20s %3d%% unchanged   %-40s (%s)\n" "$pep_id" "$percent_unchanged" "$title" "$status"
+        fi
+    done
+
+    if [ "$found" = false ]; then
+        echo "None — every PEP has been fleshed out beyond the template."
+    fi
+}
+
 # Initialize PEP framework in current directory
 init_framework() {
     log "INFO" "Initializing PEP framework..."
@@ -1136,7 +1365,7 @@ update_templates() {
     ensure_directories
 
     local updated=0
-    for template in pep-template.md blog-template.md; do
+    for template in pep-template.md pep-template-ai.md pep-template-no-ai.md blog-template.md; do
         if [ -f "${template_src}/${template}" ]; then
             cp "${template_src}/${template}" "${TEMPLATE_DIR}/${template}"
             log "INFO" "Updated ${TEMPLATE_DIR}/${template}"
@@ -1191,11 +1420,17 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [p
   ${YELLOW}status${NC} [--since YYYY-MM-DD]              Status summary, by-status listing (copy/paste-ready),
                                                flags PEPs with an unexpected/missing status, and with
                                                --since adds a Changes section (raised/completed/updated)
+  ${YELLOW}next${NC}                                    Draft/Active PEPs grouped by priority — what to work on next
+  ${YELLOW}stubs${NC} [--threshold N]                   List PEPs still mostly template boilerplate (default 85%)
   ${YELLOW}migrate${NC} [--dry-run]                     Rename existing PEPs to current naming scheme
   ${YELLOW}fix-naming${NC} [--dry-run]                  Repair PEPs written with the old CODES-PEP-NNN ID order
 
 ${GREEN}Framework commands:${NC}
   ${YELLOW}init${NC}                                    Initialize PEP framework in current directory
+  ${YELLOW}ai-block${NC} <on|off|status>                Switch docs/templates/pep-template.md between the
+                                               with-AI-block and without-AI-block variants
+  ${YELLOW}strip-ai-block${NC} [--dry-run]              Remove the Claude Prompt Context section from existing
+                                               PEPs (use after switching the template with 'ai-block off')
   ${YELLOW}update-tools${NC} [--source <path|url>]      Update pep-tools.sh from source
   ${YELLOW}update-templates${NC} [--source <path>]      Update PEP/BLOG templates from source
   ${YELLOW}help${NC}                                    Show this help message
@@ -1206,10 +1441,15 @@ ${GREEN}Examples:${NC}
   $0 commit 5 "Add Prometheus scrape config" # commit with correct prefix
 $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                           # create blog-003 for pep-005")
   $0 status --since 2026-07-01                # meeting prep: summary + by-status list + changes since date
+  $0 next                                    # what to pick up next, by priority
+  $0 stubs                                   # PEPs that still need fleshing out
   $0 migrate --dry-run                       # preview rename of old-format PEPs
   $0 migrate                                 # apply rename
   $0 fix-naming --dry-run                    # preview repair of PS-SLT-PEP-NNN style IDs
   $0 fix-naming                              # apply repair
+  $0 ai-block on                             # switch to the with-AI-block PEP template
+  $0 strip-ai-block --dry-run                # preview removing the AI block from existing PEPs
+  $0 strip-ai-block                          # apply
   $0 update-tools --source /path/to/cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
   $0 update-templates                        # uses PEP_FRAMEWORK_SOURCE from .peprc.local
 
@@ -1234,6 +1474,14 @@ main() {
         "init")
             init_framework
             ;;
+        "ai-block")
+            shift
+            ai_block "$@"
+            ;;
+        "strip-ai-block")
+            shift
+            strip_ai_block "$@"
+            ;;
         "new-pep")
             shift
             create_pep "$@"
@@ -1255,6 +1503,13 @@ main() {
         "status")
             shift
             show_status "$@"
+            ;;
+        "next")
+            show_next
+            ;;
+        "stubs")
+            shift
+            show_stubs "$@"
             ;;
         "migrate")
             shift

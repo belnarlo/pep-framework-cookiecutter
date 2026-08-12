@@ -895,6 +895,239 @@ function Show-PepStatus {
 }
 
 # ----------------------------------------------------------------------------
+# Draft/Active PEPs grouped by priority — a work queue for deciding what to
+# pick up next. Ignores terminal statuses (Implemented/Rejected/Superseded).
+# ----------------------------------------------------------------------------
+function Show-PepNext {
+    if (-not (Test-Path $script:PEP_DIR)) {
+        Write-PepLog WARN "PEP directory does not exist: $($script:PEP_DIR)"
+        return
+    }
+
+    Write-Host "What to work on next (Draft/Active, by priority):" -ForegroundColor Blue
+    Write-Host "===================================================="
+
+    $priorities = @("High", "Medium", "Low")
+    $files = @(Get-ChildItem -Path $script:PEP_DIR -Filter "pep-*.md" -File -ErrorAction SilentlyContinue)
+    $anyFound = $false
+
+    foreach ($priority in $priorities) {
+        $matching = @($files | Where-Object {
+            $status = Get-PepField $_.FullName "Status"
+            $prio = Get-PepField $_.FullName "Priority"
+            ($status -eq "Draft" -or $status -eq "Active") -and $prio -eq $priority
+        })
+        if ($matching.Count -eq 0) { continue }
+        $anyFound = $true
+
+        Write-Host ""
+        Write-Host "## $priority ($($matching.Count))"
+        foreach ($pep in $matching) {
+            $num = Get-PepNumFromFile $pep.FullName
+            $pepId = Get-PepId ([int]$num)
+            $title = Get-PepField $pep.FullName "Title"
+            $status = Get-PepField $pep.FullName "Status"
+            $type = Get-PepField $pep.FullName "Type"
+            $abstract = Get-PepAbstract $pep.FullName
+            Write-Host "- ${pepId} [$type] $title ($status)"
+            if ($abstract) { Write-Host "    $abstract" }
+        }
+    }
+
+    if (-not $anyFound) {
+        Write-Host ""
+        Write-Host "Nothing in Draft or Active — nothing queued to work on."
+    }
+}
+
+# ----------------------------------------------------------------------------
+# List PEPs whose content is still mostly template boilerplate. Compares each
+# PEP's body (everything from the first "## " heading onward, so the
+# auto-filled header table doesn't count) against the active template; PEPs
+# at or above -Threshold percent unchanged are flagged as stubs. Uses
+# Compare-Object (a multiset/content comparison, not a positional line diff)
+# as a heuristic — good enough to spot untouched sections, not a precise diff.
+# ----------------------------------------------------------------------------
+function Get-PepBodyLines {
+    param([string]$FilePath)
+    $body = $false
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in @(Get-Content -Path $FilePath -ErrorAction SilentlyContinue)) {
+        if ($line -match '^## ') { $body = $true }
+        if ($body) { $lines.Add($line) }
+    }
+    return $lines
+}
+
+function Show-PepStubs {
+    param([string[]]$Arguments)
+
+    $threshold = 85
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        if ($Arguments[$i] -eq "--threshold") { $threshold = [int]$Arguments[$i + 1]; $i++ }
+        else { Write-PepLog ERROR "Unknown option: $($Arguments[$i])"; Write-PepLog INFO "Usage: pep-tools.ps1 stubs [--threshold N]"; exit 1 }
+    }
+
+    if (-not (Test-Path $script:PEP_DIR)) {
+        Write-PepLog WARN "PEP directory does not exist: $($script:PEP_DIR)"
+        return
+    }
+
+    $templatePath = Join-Path $script:TEMPLATE_DIR "pep-template.md"
+    if (-not (Test-Path $templatePath)) {
+        Write-PepLog ERROR "PEP template not found: $templatePath"
+        exit 1
+    }
+
+    Write-Host "PEPs still mostly template boilerplate (>= $threshold% unchanged):" -ForegroundColor Blue
+    Write-Host "======================================================================"
+
+    $templateBody = Get-PepBodyLines $templatePath
+    $totalLines = $templateBody.Count
+
+    $found = $false
+    $files = Get-ChildItem -Path $script:PEP_DIR -Filter "pep-*.md" -File -ErrorAction SilentlyContinue
+    foreach ($pep in $files) {
+        $fileBody = Get-PepBodyLines $pep.FullName
+
+        $changed = 0
+        if ($totalLines -gt 0) {
+            $comparison = Compare-Object -ReferenceObject $templateBody -DifferenceObject $fileBody
+            $changed = ($comparison | Measure-Object).Count
+        }
+        $changedPairs = [math]::Ceiling($changed / 2.0)
+
+        $percentUnchanged = 100
+        if ($totalLines -gt 0) {
+            $percentUnchanged = 100 - [int](($changedPairs * 100) / $totalLines)
+            if ($percentUnchanged -lt 0) { $percentUnchanged = 0 }
+        }
+
+        if ($percentUnchanged -ge $threshold) {
+            $found = $true
+            $num = Get-PepNumFromFile $pep.FullName
+            $pepId = Get-PepId ([int]$num)
+            $title = Get-PepField $pep.FullName "Title"
+            $status = Get-PepField $pep.FullName "Status"
+            Write-Host ("{0,-20} {1,3}% unchanged   {2,-40} ({3})" -f $pepId, $percentUnchanged, $title, $status)
+        }
+    }
+
+    if (-not $found) {
+        Write-Host "None — every PEP has been fleshed out beyond the template."
+    }
+}
+
+# ----------------------------------------------------------------------------
+# Switch docs/templates/pep-template.md between the with-AI-block and
+# without-AI-block variants, or report which one is active.
+# ----------------------------------------------------------------------------
+function Invoke-PepAiBlock {
+    param([string[]]$Arguments)
+
+    $action = if ($Arguments.Count -gt 0 -and $Arguments[0]) { $Arguments[0] } else { "status" }
+    $active = Join-Path $script:TEMPLATE_DIR "pep-template.md"
+    $aiVariant = Join-Path $script:TEMPLATE_DIR "pep-template-ai.md"
+    $noAiVariant = Join-Path $script:TEMPLATE_DIR "pep-template-no-ai.md"
+
+    if ($action -notin @("on", "off", "status")) {
+        Write-PepLog ERROR "Unknown action: $action"
+        Write-PepLog INFO "Usage: pep-tools.ps1 ai-block <on|off|status>"
+        exit 1
+    }
+
+    if ($action -eq "status") {
+        if (-not (Test-Path $active)) {
+            Write-PepLog WARN "No active template found: $active"
+            return
+        }
+        if ((Test-Path $aiVariant) -and ((Get-Content $active -Raw) -eq (Get-Content $aiVariant -Raw))) {
+            Write-PepLog INFO "AI block: on ($active matches pep-template-ai.md)"
+        } elseif ((Test-Path $noAiVariant) -and ((Get-Content $active -Raw) -eq (Get-Content $noAiVariant -Raw))) {
+            Write-PepLog INFO "AI block: off ($active matches pep-template-no-ai.md)"
+        } else {
+            Write-PepLog INFO "AI block: unknown — $active has been customised and no longer matches either variant"
+        }
+        return
+    }
+
+    $sourceVariant = $noAiVariant
+    $label = "without"
+    if ($action -eq "on") {
+        $sourceVariant = $aiVariant
+        $label = "with"
+    }
+
+    if (-not (Test-Path $sourceVariant)) {
+        Write-PepLog ERROR "Variant not found: $sourceVariant"
+        Write-PepLog INFO "Run '.\tools\pep-tools.ps1 update-templates' to pull the latest template variants from source"
+        exit 1
+    }
+
+    Copy-Item $sourceVariant $active -Force
+    Write-PepLog INFO "Switched $active to the $label-AI-block variant"
+    Write-PepLog WARN "This overwrote any manual edits to $active — the other variant file was left untouched"
+}
+
+# ----------------------------------------------------------------------------
+# Strip the "## Claude Prompt Context" section out of existing PEP files.
+# ai-block on/off only swaps the *template* used by new-pep — this cleans up
+# PEPs that were already created while the AI-block template was active.
+# ----------------------------------------------------------------------------
+function Remove-PepAiBlock {
+    param([string[]]$Arguments)
+
+    $dryRun = $Arguments -contains "--dry-run"
+
+    if (-not (Test-Path $script:PEP_DIR)) {
+        Write-PepLog WARN "PEP directory does not exist: $($script:PEP_DIR)"
+        return
+    }
+
+    $stripped = 0
+    $skipped = 0
+
+    $files = Get-ChildItem -Path $script:PEP_DIR -Filter "pep-*.md" -File -ErrorAction SilentlyContinue
+    foreach ($pep in $files) {
+        $lines = @(Get-Content -Path $pep.FullName -ErrorAction SilentlyContinue)
+        if (-not ($lines -match '^## Claude Prompt Context\s*$')) {
+            $skipped++
+            continue
+        }
+
+        $verb = if ($dryRun) { "Would strip" } else { "Stripping" }
+        Write-PepLog INFO "$verb AI block: $($pep.Name)"
+        $stripped++
+
+        if ($dryRun) { continue }
+
+        $newLines = New-Object System.Collections.Generic.List[string]
+        $skip = $false
+        foreach ($line in $lines) {
+            if ($line -match '^## Claude Prompt Context\s*$') { $skip = $true; continue }
+            if ($skip -and $line -match '^## ') { $skip = $false }
+            if ($skip) { continue }
+            $newLines.Add($line)
+        }
+        Set-Content -Path $pep.FullName -Value $newLines
+    }
+
+    if (($stripped + $skipped) -eq 0) {
+        Write-PepLog INFO "No PEP files found"
+        return
+    }
+
+    if ($dryRun) {
+        Write-PepLog INFO "Dry run: $stripped file(s) would be stripped, $skipped had no AI block"
+    } else {
+        Write-PepLog INFO "Done: $stripped file(s) stripped, $skipped had no AI block"
+        if ($stripped -gt 0 -and (Test-Path ".git")) {
+            Write-PepLog INFO "Review the changes then commit: git add -A; git commit -m 'chore: remove AI block from PEPs'"
+        }
+    }
+}
+
+# ----------------------------------------------------------------------------
 # Initialize PEP framework in current directory
 # ----------------------------------------------------------------------------
 function Initialize-PepFramework {
@@ -1060,7 +1293,7 @@ function Update-PepTemplates {
     Confirm-Directories
 
     $updated = 0
-    foreach ($template in @("pep-template.md", "blog-template.md")) {
+    foreach ($template in @("pep-template.md", "pep-template-ai.md", "pep-template-no-ai.md", "blog-template.md")) {
         $src = Join-Path $templateSrc $template
         if (Test-Path $src) {
             Copy-Item $src (Join-Path $script:TEMPLATE_DIR $template) -Force
@@ -1118,11 +1351,17 @@ function Show-PepHelp {
     Write-Host "  status [--since YYYY-MM-DD]            Status summary, by-status listing (copy/paste-ready),"
     Write-Host "                                          flags PEPs with an unexpected/missing status, and with"
     Write-Host "                                          --since adds a Changes section (raised/completed/updated)"
+    Write-Host "  next                                    Draft/Active PEPs grouped by priority — what to work on next"
+    Write-Host "  stubs [--threshold N]                  List PEPs still mostly template boilerplate (default 85%)"
     Write-Host "  migrate [--dry-run]                    Rename existing PEPs to current naming scheme"
     Write-Host "  fix-naming [--dry-run]                 Repair PEPs written with the old CODES-PEP-NNN ID order"
     Write-Host ""
     Write-Host "Framework commands:" -ForegroundColor Green
     Write-Host "  init                                    Initialize PEP framework in current directory"
+    Write-Host "  ai-block <on|off|status>                Switch docs/templates/pep-template.md between the"
+    Write-Host "                                          with-AI-block and without-AI-block variants"
+    Write-Host "  strip-ai-block [--dry-run]              Remove the Claude Prompt Context section from existing"
+    Write-Host "                                          PEPs (use after switching the template with 'ai-block off')"
     Write-Host "  update-tools [--source <path|url>]     Update pep-tools.ps1 from source"
     Write-Host "  update-templates [--source <path>]     Update PEP/BLOG templates from source"
     Write-Host "  help                                    Show this help message"
@@ -1132,6 +1371,8 @@ function Show-PepHelp {
     Write-Host "  .\tools\pep-tools.ps1 new-branch 5"
     Write-Host "  .\tools\pep-tools.ps1 commit 5 `"Add Prometheus scrape config`""
     Write-Host "  .\tools\pep-tools.ps1 status --since 2026-07-01"
+    Write-Host "  .\tools\pep-tools.ps1 next"
+    Write-Host "  .\tools\pep-tools.ps1 stubs"
     if ($enableBlogs -eq "y") {
         Write-Host "  .\tools\pep-tools.ps1 new-blog 3 5"
     }
@@ -1139,6 +1380,9 @@ function Show-PepHelp {
     Write-Host "  .\tools\pep-tools.ps1 migrate"
     Write-Host "  .\tools\pep-tools.ps1 fix-naming --dry-run"
     Write-Host "  .\tools\pep-tools.ps1 fix-naming"
+    Write-Host "  .\tools\pep-tools.ps1 ai-block on"
+    Write-Host "  .\tools\pep-tools.ps1 strip-ai-block --dry-run"
+    Write-Host "  .\tools\pep-tools.ps1 strip-ai-block"
     Write-Host "  .\tools\pep-tools.ps1 update-tools --source \path\to\cookiecutter\{{cookiecutter.project_slug}}\tools"
     Write-Host "  .\tools\pep-tools.ps1 update-templates"
     Write-Host ""
@@ -1167,8 +1411,12 @@ switch ($Command) {
     "new-blog"         { New-PepBlog -BlogNum $Rest[0] -PepNum $Rest[1] }
     "list"             { Show-PepList }
     "status"           { Show-PepStatus -Arguments $Rest }
+    "next"             { Show-PepNext }
+    "stubs"            { Show-PepStubs -Arguments $Rest }
     "migrate"          { Invoke-PepMigrate -Arguments $Rest }
     "fix-naming"       { Invoke-PepFixNaming -Arguments $Rest }
+    "ai-block"         { Invoke-PepAiBlock -Arguments $Rest }
+    "strip-ai-block"   { Remove-PepAiBlock -Arguments $Rest }
     "update-tools"     { Update-PepTools -Arguments $Rest }
     "update-templates" { Update-PepTemplates -Arguments $Rest }
     "help"             { Show-PepHelp }

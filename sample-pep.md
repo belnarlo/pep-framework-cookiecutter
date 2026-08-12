@@ -14,6 +14,10 @@
 > **Note:** This sample uses `PROJECT_CODE=PE`, `REPO_CODE=MON` — so the ID is `PEP-PE-MON-001`
 > and the file is named `pep-pe-mon-001-proj-project-foundation.md`.  
 > With no codes configured the ID would be `PEP-001` and the file `pep-001-proj-project-foundation.md`.
+>
+> This sample includes the **Claude Prompt Context** section, which is off by default in generated
+> projects (`include_ai_block=n`). Enable it with `./tools/pep-tools.sh ai-block on` or the
+> `include_ai_block=y` cookiecutter option.
 
 ---
 

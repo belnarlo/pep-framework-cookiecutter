@@ -9,7 +9,7 @@ The PEP Framework provides:
 - **PEPs (Project Enhancement Packages)** — Planning documents created BEFORE implementation
 - **BLOGs (Build Logs)** — Implementation records documenting what was actually built (optional)
 - **Git Integration** — Automatic linking between code changes and planning documents
-- **Claude AI Integration** — Embedded prompts for AI-assisted implementation
+- **Claude AI Integration (optional)** — Embedded prompts for AI-assisted implementation, off by default
 
 Perfect for system engineers, DevOps teams, homelabbers, and anyone managing infrastructure or software projects — especially across ADO or GitHub project/repo hierarchies.
 
@@ -44,6 +44,7 @@ cd your-new-project
 | `project_description` | Brief project description | "Monitoring stack for the PE platform" |
 | `project_type` | Project category | infrastructure / homelab / monitoring / software / automation / general |
 | `use_blogs` | Enable Build Logs feature | y / n (set n for work repos that don't need implementation logs) |
+| `include_ai_block` | Include the Claude Prompt Context section in the PEP template | y / n (default n — toggle anytime with `ai-block on\|off`) |
 | `default_editor` | Preferred editor | vi / vim / nano / code / zed / emacs |
 | `use_git_hooks` | Install git commit validation hook | y / n |
 | `require_pep_reference` | Strict mode: all commits must reference a PEP | y / n |
@@ -91,7 +92,9 @@ your-new-project/
 │   ├── peps/                       # Project Enhancement Packages
 │   ├── blogs/                      # Build Logs (only if ENABLE_BLOGS=y)
 │   └── templates/
-│       ├── pep-template.md         # PEP template
+│       ├── pep-template.md         # PEP template (active — used by new-pep)
+│       ├── pep-template-ai.md      # PEP template variant, with the AI block
+│       ├── pep-template-no-ai.md   # PEP template variant, without the AI block
 │       └── blog-template.md        # BLOG template
 ├── tools/
 │   ├── pep-tools.sh                # Management CLI
@@ -131,12 +134,16 @@ your-new-project/
 ./tools/pep-tools.sh commit <pep-num> [message]   # Commit with correct format
 ./tools/pep-tools.sh list                         # List all PEPs with type/status
 ./tools/pep-tools.sh status                       # Status summary
+./tools/pep-tools.sh next                         # Draft/Active PEPs by priority — what to work on next
+./tools/pep-tools.sh stubs [--threshold N]        # PEPs still mostly template boilerplate
 
 # Build Logs (when ENABLE_BLOGS=y)
 ./tools/pep-tools.sh new-blog [blog-num] [pep-num]
 
 # Framework management
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename old-format PEPs to new scheme
+./tools/pep-tools.sh ai-block <on|off|status>     # Switch the PEP template's AI block on/off
+./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
 ./tools/pep-tools.sh update-tools                 # Update pep-tools.sh from source
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates from source
 ./tools/pep-tools.sh help                         # Full help with current repo's ID format
@@ -189,6 +196,8 @@ The original `pep-tools.sh` did not include `update-tools`. Copy the new script 
 cp /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools/pep-tools.sh tools/pep-tools.sh
 cp /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools/git-hooks/commit-msg tools/git-hooks/commit-msg
 cp /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/docs/templates/pep-template.md docs/templates/pep-template.md
+cp /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/docs/templates/pep-template-ai.md docs/templates/pep-template-ai.md
+cp /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/docs/templates/pep-template-no-ai.md docs/templates/pep-template-no-ai.md
 cp /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/docs/templates/blog-template.md docs/templates/blog-template.md
 chmod +x tools/pep-tools.sh tools/git-hooks/commit-msg
 
@@ -269,7 +278,23 @@ The template generates type-specific README guidelines based on your chosen `pro
 
 ## Claude AI Integration
 
-Each PEP includes a **Claude Prompt Context** section:
+The PEP template can optionally include a **Claude Prompt Context** section. It's **off by default** — set `include_ai_block=y` when generating the project, or toggle it anytime:
+
+```bash
+./tools/pep-tools.sh ai-block on      # switch docs/templates/pep-template.md to the with-AI-block variant
+./tools/pep-tools.sh ai-block off     # switch back to the plain variant
+./tools/pep-tools.sh ai-block status  # check which one is active
+```
+
+`ai-block` only affects the template used by `new-pep` going forward. To remove the Claude Prompt
+Context section from PEPs that were already created with it:
+
+```bash
+./tools/pep-tools.sh strip-ai-block --dry-run   # preview which PEPs would change
+./tools/pep-tools.sh strip-ai-block             # apply
+```
+
+With the block enabled:
 
 ```bash
 # 1. Create PEP with context

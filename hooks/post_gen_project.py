@@ -51,6 +51,19 @@ def cleanup_optional_features():
         else:
             print("⚠ docs/blogs is not empty, leaving it in place despite blogs being disabled")
 
+def setup_ai_block():
+    """Select which PEP template variant (with/without the AI block) becomes the active one."""
+    include_ai_block = "{{ cookiecutter.include_ai_block }}"
+
+    active = 'docs/templates/pep-template.md'
+    ai_variant = 'docs/templates/pep-template-ai.md'
+
+    if include_ai_block.lower() == 'y' and os.path.exists(ai_variant):
+        run_command(f"cp {ai_variant} {active}", "Enabled AI block in pep-template.md")
+    else:
+        print("✓ AI block left out of pep-template.md (default)")
+    print("  Both variants remain in docs/templates/ — switch anytime with ./tools/pep-tools.sh ai-block on|off")
+
 def setup_git():
     """Initialize git repository if needed."""
     print("Setting up git integration...")
@@ -102,6 +115,8 @@ def show_next_steps():
     print("   ./tools/pep-tools.sh help          # Show all commands")
     print("   ./tools/pep-tools.sh list          # List all PEPs")
     print("   ./tools/pep-tools.sh status        # Show status summary")
+    print("   ./tools/pep-tools.sh next          # Draft/Active PEPs, sorted by priority")
+    print("   ./tools/pep-tools.sh stubs         # PEPs still mostly template boilerplate")
     
     print("\n📖 Documentation:")
     print("   README.md                          # Project-specific guide")
@@ -134,6 +149,9 @@ def main():
         print()
 
         cleanup_optional_features()
+        print()
+
+        setup_ai_block()
         print()
 
         setup_git()
