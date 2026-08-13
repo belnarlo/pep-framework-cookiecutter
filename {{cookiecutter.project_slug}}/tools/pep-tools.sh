@@ -1298,6 +1298,20 @@ is_git_source() {
     esac
 }
 
+# Best-effort: turn a raw-file GitHub URL into its repo's git clone URL, so a
+# PEP_FRAMEWORK_SOURCE saved as a single-file URL (e.g. by an older
+# update-tools, which only ever needed to fetch pep-tools.sh) still works for
+# update-templates, which needs the whole repo. Echoes nothing if it can't
+# recognize the URL shape — pure function, safe to call via $(...).
+derive_git_url_from_raw() {
+    local url="$1"
+    if [[ "$url" =~ ^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/ ]]; then
+        echo "https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}.git"
+    elif [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/(blob|raw)/ ]]; then
+        echo "https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}.git"
+    fi
+}
+
 _GIT_SRC_TMPDIR=""
 _cleanup_git_source() {
     [ -n "$_GIT_SRC_TMPDIR" ] && rm -rf "$_GIT_SRC_TMPDIR"
@@ -1430,9 +1444,20 @@ update_templates() {
         clone_git_source "$source"
         template_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/docs/templates"
     elif echo "$source" | grep -qE '^https?://'; then
-        log "ERROR" "Plain URL sources are not supported for update-templates — use a git URL (ending in .git) or a local path."
-        log "INFO" "Set PEP_FRAMEWORK_SOURCE to a git URL, or the local tools/ directory of your cookiecutter checkout."
-        exit 1
+        # A raw single-file URL (e.g. saved by an older update-tools, which
+        # only ever needed pep-tools.sh) can't be used directly — try to
+        # derive its repo's clone URL, or fall back to the default repo.
+        local derived
+        derived=$(derive_git_url_from_raw "$source")
+        if [ -z "$derived" ]; then
+            log "WARN" "This source is a single-file URL, not a git repo — update-templates needs the whole repo."
+            log "INFO" "Falling back to the default template repo: $DEFAULT_TEMPLATE_REPO"
+            derived="$DEFAULT_TEMPLATE_REPO"
+        else
+            log "INFO" "Derived git repo from raw-file source: $derived"
+        fi
+        clone_git_source "$derived"
+        template_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/docs/templates"
     else
         local src_dir="$source"
         [ -f "$source" ] && src_dir="$(dirname "$source")"

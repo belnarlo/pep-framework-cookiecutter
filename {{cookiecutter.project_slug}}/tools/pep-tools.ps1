@@ -1239,6 +1239,22 @@ function Test-GitSource {
     return ($Source -match '\.git$') -or ($Source -match '^git@') -or ($Source -match '^ssh://')
 }
 
+# Best-effort: turn a raw-file GitHub URL into its repo's git clone URL, so a
+# PEP_FRAMEWORK_SOURCE saved as a single-file URL (e.g. by an older
+# update-tools, which only ever needed to fetch pep-tools.ps1) still works
+# for Update-PepTemplates, which needs the whole repo. Returns $null if it
+# can't recognize the URL shape.
+function Get-GitUrlFromRawUrl {
+    param([string]$Url)
+    if ($Url -match '^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/') {
+        return "https://github.com/$($matches[1])/$($matches[2]).git"
+    }
+    if ($Url -match '^https://github\.com/([^/]+)/([^/]+)/(blob|raw)/') {
+        return "https://github.com/$($matches[1])/$($matches[2]).git"
+    }
+    return $null
+}
+
 $script:GitCloneTmpDir = $null
 
 function Remove-GitCloneTmpDir {
@@ -1370,9 +1386,19 @@ function Update-PepTemplates {
             Invoke-GitClone $source
             $templateSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/docs/templates"
         } elseif ($source -match '^https?://') {
-            Write-PepLog ERROR "Plain URL sources are not supported for update-templates — use a git URL (ending in .git) or a local path."
-            Write-PepLog INFO "Set PEP_FRAMEWORK_SOURCE to a git URL, or the local tools/ directory of your cookiecutter checkout."
-            exit 1
+            # A raw single-file URL (e.g. saved by an older update-tools,
+            # which only ever needed pep-tools.ps1) can't be used directly —
+            # try to derive its repo's clone URL, or fall back to the default.
+            $derived = Get-GitUrlFromRawUrl $source
+            if (-not $derived) {
+                Write-PepLog WARN "This source is a single-file URL, not a git repo — update-templates needs the whole repo."
+                Write-PepLog INFO "Falling back to the default template repo: $script:DEFAULT_TEMPLATE_REPO"
+                $derived = $script:DEFAULT_TEMPLATE_REPO
+            } else {
+                Write-PepLog INFO "Derived git repo from raw-file source: $derived"
+            }
+            Invoke-GitClone $derived
+            $templateSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/docs/templates"
         } else {
             $srcDir = $source
             if (Test-Path $source -PathType Leaf) { $srcDir = Split-Path $source -Parent }
