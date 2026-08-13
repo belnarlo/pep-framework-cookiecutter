@@ -144,8 +144,8 @@ your-new-project/
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename old-format PEPs to new scheme
 ./tools/pep-tools.sh ai-block <on|off|status>     # Switch the PEP template's AI block on/off
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
-./tools/pep-tools.sh update-tools                 # Update pep-tools.sh from source
-./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates from source
+./tools/pep-tools.sh update-tools                 # Update pep-tools.sh (defaults to this repo's git URL)
+./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default)
 ./tools/pep-tools.sh help                         # Full help with current repo's ID format
 ```
 
@@ -179,9 +179,14 @@ cp -r ../temp/{docs,tools,.peprc,.peprc.local.example,.gitignore} .
 ### Projects that already have `update-tools` (v1.0+)
 
 ```bash
-# Update the script and templates from your local cookiecutter checkout
-./tools/pep-tools.sh update-tools --source /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
+# With no --source and no PEP_FRAMEWORK_SOURCE configured, both commands clone
+# this repo's git URL automatically — no local checkout needed:
+./tools/pep-tools.sh update-tools
 ./tools/pep-tools.sh update-templates
+
+# Or point at a local checkout or a different git remote (any URL ending in .git):
+./tools/pep-tools.sh update-tools --source /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
+./tools/pep-tools.sh update-tools --source git@github.com:your-org/your-fork.git
 
 # Re-install the git hook to pick up the new commit format
 ./tools/pep-tools.sh init
@@ -218,7 +223,9 @@ REPO_CODE="MON"       # short repo identifier, or leave blank
 ENABLE_BLOGS="y"      # set to "n" to disable Build Logs
 ```
 
-2. Re-install the git hook (it now reads `.peprc` for your ID prefix):
+2. Re-install the git hook (it now reads `.peprc` for your ID prefix). If `ENABLE_BLOGS="n"`,
+   this also cleans up any leftover `docs/blogs/` (if empty) and `docs/templates/blog-template.md`
+   from before that cleanup existed:
 
 ```bash
 ./tools/pep-tools.sh init
@@ -257,7 +264,11 @@ AUTO_OPEN_EDITOR="true"
 PEP_FRAMEWORK_SOURCE="/path/to/pep-framework-cookiecutter/{{cookiecutter.project_slug}}/tools"
 ```
 
-`PEP_FRAMEWORK_SOURCE` is used by `update-tools` and `update-templates` when no `--source` flag is given.
+`PEP_FRAMEWORK_SOURCE` is used by `update-tools` and `update-templates` when no `--source` flag is
+given. It accepts a local path, a git URL ending in `.git` (cloned automatically — `update-tools`
+also accepts a raw-file URL for a single `pep-tools.sh`), or an SSH remote (`git@host:org/repo.git`).
+If it's unset entirely, both commands fall back to this project's own git repository, so they work
+on a fresh machine with no configuration at all.
 
 ---
 

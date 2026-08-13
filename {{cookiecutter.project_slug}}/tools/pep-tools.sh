@@ -11,6 +11,11 @@ BLOG_DIR="docs/blogs"
 TEMPLATE_DIR="docs/templates"
 CONFIG_FILE=".peprc"
 
+# Fallback source for update-tools/update-templates when no --source flag or
+# PEP_FRAMEWORK_SOURCE is configured — lets those commands work out of the box
+# on any machine, without a local checkout of the cookiecutter repo.
+DEFAULT_TEMPLATE_REPO="https://github.com/belnarlo/pep-framework-cookiecutter.git"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -133,6 +138,30 @@ ensure_directories() {
             log "INFO" "Created directory: $dir"
         fi
     done
+}
+
+# Remove blog scaffolding (docs/blogs, blog-template.md) when the feature is
+# disabled — covers projects generated before this cleanup existed, or where
+# ENABLE_BLOGS was flipped to "n" in .peprc after the fact. Run via init.
+cleanup_blog_artifacts() {
+    if [ "${ENABLE_BLOGS:-y}" = "y" ]; then
+        return
+    fi
+
+    if [ -d "$BLOG_DIR" ]; then
+        if [ -z "$(find "$BLOG_DIR" -mindepth 1 ! -name '.gitkeep' 2>/dev/null)" ]; then
+            rm -rf "$BLOG_DIR"
+            log "INFO" "Removed $BLOG_DIR (blogs feature disabled)"
+        else
+            log "WARN" "$BLOG_DIR is not empty, leaving it in place despite blogs being disabled"
+        fi
+    fi
+
+    local blog_template="${TEMPLATE_DIR}/blog-template.md"
+    if [ -f "$blog_template" ]; then
+        rm -f "$blog_template"
+        log "INFO" "Removed $blog_template (blogs feature disabled)"
+    fi
 }
 
 # Get next available PEP number (extracts the first 3-digit group from each filename)
@@ -1196,6 +1225,7 @@ init_framework() {
     log "INFO" "Initializing PEP framework..."
 
     ensure_directories
+    cleanup_blog_artifacts
 
     if [ ! -f "$CONFIG_FILE" ]; then
         cat > "$CONFIG_FILE" << EOF
@@ -1259,7 +1289,49 @@ create_templates() {
     fi
 }
 
-# Update pep-tools.sh from a source path or URL
+# True if $1 looks like a cloneable git remote (repo URL) rather than a
+# single raw-file URL — i.e. it ends in .git, or is an SSH-style git remote.
+is_git_source() {
+    case "$1" in
+        *.git|git@*|ssh://*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_GIT_SRC_TMPDIR=""
+_cleanup_git_source() {
+    [ -n "$_GIT_SRC_TMPDIR" ] && rm -rf "$_GIT_SRC_TMPDIR"
+}
+
+# Shallow-clones a git source into $_GIT_SRC_TMPDIR/repo and registers cleanup
+# on script exit. Sets the global $_GIT_SRC_TMPDIR rather than returning the
+# path via command substitution — a `trap ... EXIT` set inside a $(...)
+# subshell fires when that subshell exits, not the main script, which would
+# delete the clone before the caller ever reads it. Call this directly.
+clone_git_source() {
+    local url="$1"
+
+    if ! command -v git >/dev/null 2>&1; then
+        log "ERROR" "git is required to fetch from a git source: $url"
+        exit 1
+    fi
+
+    _GIT_SRC_TMPDIR=$(mktemp -d)
+    trap _cleanup_git_source EXIT
+
+    log "INFO" "Cloning $url ..."
+    if ! git clone --depth 1 --quiet "$url" "${_GIT_SRC_TMPDIR}/repo" >/dev/null 2>&1; then
+        log "ERROR" "Failed to clone: $url"
+        exit 1
+    fi
+
+    if [ ! -d "${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}" ]; then
+        log "ERROR" "Expected {{cookiecutter.project_slug}}/ not found in clone: $url"
+        exit 1
+    fi
+}
+
+# Update pep-tools.sh from a source path, git URL, or raw-file URL
 update_tools() {
     local source=""
     local save_source=false
@@ -1277,8 +1349,8 @@ update_tools() {
     fi
 
     if [ -z "$source" ]; then
-        log "ERROR" "No source specified. Provide --source <path|url> or set PEP_FRAMEWORK_SOURCE in .peprc.local"
-        exit 1
+        source="$DEFAULT_TEMPLATE_REPO"
+        log "INFO" "No source specified — defaulting to $source"
     fi
 
     local dest="tools/pep-tools.sh"
@@ -1287,7 +1359,15 @@ update_tools() {
     cp "$dest" "$backup"
     log "INFO" "Backed up current tools to $backup"
 
-    if echo "$source" | grep -qE '^https?://'; then
+    if is_git_source "$source"; then
+        clone_git_source "$source"
+        local src_file="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools/pep-tools.sh"
+        if [ ! -f "$src_file" ]; then
+            log "ERROR" "Source file not found: $src_file"
+            cp "$backup" "$dest"; exit 1
+        fi
+        cp "$src_file" "$dest"
+    elif echo "$source" | grep -qE '^https?://'; then
         if command -v curl >/dev/null 2>&1; then
             curl -fsSL "$source" -o "$dest"
         elif command -v wget >/dev/null 2>&1; then
@@ -1341,24 +1421,26 @@ update_templates() {
     fi
 
     if [ -z "$source" ]; then
-        log "ERROR" "No source specified. Provide --source <path> or set PEP_FRAMEWORK_SOURCE in .peprc.local"
-        exit 1
+        source="$DEFAULT_TEMPLATE_REPO"
+        log "INFO" "No source specified — defaulting to $source"
     fi
-
-    if echo "$source" | grep -qE '^https?://'; then
-        log "ERROR" "URL sources are not supported for update-templates — use a local path."
-        log "INFO" "Set PEP_FRAMEWORK_SOURCE to the local tools/ directory of your cookiecutter checkout."
-        exit 1
-    fi
-
-    local src_dir="$source"
-    [ -f "$source" ] && src_dir="$(dirname "$source")"
 
     local template_src
-    template_src="$(cd "${src_dir}/../docs/templates" 2>/dev/null && pwd)" || true
+    if is_git_source "$source"; then
+        clone_git_source "$source"
+        template_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/docs/templates"
+    elif echo "$source" | grep -qE '^https?://'; then
+        log "ERROR" "Plain URL sources are not supported for update-templates — use a git URL (ending in .git) or a local path."
+        log "INFO" "Set PEP_FRAMEWORK_SOURCE to a git URL, or the local tools/ directory of your cookiecutter checkout."
+        exit 1
+    else
+        local src_dir="$source"
+        [ -f "$source" ] && src_dir="$(dirname "$source")"
+        template_src="$(cd "${src_dir}/../docs/templates" 2>/dev/null && pwd)" || true
+    fi
 
     if [ -z "$template_src" ] || [ ! -d "$template_src" ]; then
-        log "ERROR" "Templates directory not found. Expected at: ${src_dir}/../docs/templates"
+        log "ERROR" "Templates directory not found. Expected at: ${template_src:-<unresolved from $source>}"
         exit 1
     fi
 
@@ -1431,8 +1513,9 @@ ${GREEN}Framework commands:${NC}
                                                with-AI-block and without-AI-block variants
   ${YELLOW}strip-ai-block${NC} [--dry-run]              Remove the Claude Prompt Context section from existing
                                                PEPs (use after switching the template with 'ai-block off')
-  ${YELLOW}update-tools${NC} [--source <path|url>]      Update pep-tools.sh from source
-  ${YELLOW}update-templates${NC} [--source <path>]      Update PEP/BLOG templates from source
+  ${YELLOW}update-tools${NC} [--source <path|git|url>]  Update pep-tools.sh from source (defaults to the
+                                               framework's git repo if none is configured)
+  ${YELLOW}update-templates${NC} [--source <path|git>]  Update PEP/BLOG templates from source (same default)
   ${YELLOW}help${NC}                                    Show this help message
 
 ${GREEN}Examples:${NC}
@@ -1450,8 +1533,9 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                     
   $0 ai-block on                             # switch to the with-AI-block PEP template
   $0 strip-ai-block --dry-run                # preview removing the AI block from existing PEPs
   $0 strip-ai-block                          # apply
+  $0 update-tools                            # no source configured — clones the framework's git repo
   $0 update-tools --source /path/to/cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
-  $0 update-templates                        # uses PEP_FRAMEWORK_SOURCE from .peprc.local
+  $0 update-templates                        # uses PEP_FRAMEWORK_SOURCE, or the git repo if unset
 
 ${GREEN}PEP Types:${NC}
   Project | Feature | Process | Infrastructure | Documentation | Bug | Enhancement | Research | Security | Performance

@@ -24,6 +24,11 @@ $script:BLOG_DIR = "docs/blogs"
 $script:TEMPLATE_DIR = "docs/templates"
 $script:CONFIG_FILE = ".peprc"
 
+# Fallback source for update-tools/update-templates when no --source flag or
+# PEP_FRAMEWORK_SOURCE is configured — lets those commands work out of the box
+# on any machine, without a local checkout of the cookiecutter repo.
+$script:DEFAULT_TEMPLATE_REPO = "https://github.com/belnarlo/pep-framework-cookiecutter.git"
+
 function Import-PepConfig {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return }
@@ -179,6 +184,29 @@ function Confirm-Directories {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
             Write-PepLog INFO "Created directory: $dir"
         }
+    }
+}
+
+# Remove blog scaffolding (docs/blogs, blog-template.md) when the feature is
+# disabled — covers projects generated before this cleanup existed, or where
+# ENABLE_BLOGS was flipped to "n" in .peprc after the fact. Run via init.
+function Remove-PepBlogArtifacts {
+    if ((Get-EnableBlogs) -eq "y") { return }
+
+    if (Test-Path $script:BLOG_DIR) {
+        $contents = @(Get-ChildItem -Path $script:BLOG_DIR -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne ".gitkeep" })
+        if ($contents.Count -eq 0) {
+            Remove-Item -Recurse -Force $script:BLOG_DIR
+            Write-PepLog INFO "Removed $($script:BLOG_DIR) (blogs feature disabled)"
+        } else {
+            Write-PepLog WARN "$($script:BLOG_DIR) is not empty, leaving it in place despite blogs being disabled"
+        }
+    }
+
+    $blogTemplate = Join-Path $script:TEMPLATE_DIR "blog-template.md"
+    if (Test-Path $blogTemplate) {
+        Remove-Item -Force $blogTemplate
+        Write-PepLog INFO "Removed $blogTemplate (blogs feature disabled)"
     }
 }
 
@@ -1134,6 +1162,7 @@ function Initialize-PepFramework {
     Write-PepLog INFO "Initializing PEP framework..."
 
     Confirm-Directories
+    Remove-PepBlogArtifacts
 
     if (-not (Test-Path $script:CONFIG_FILE)) {
         $projectName = Split-Path (Get-Location) -Leaf
@@ -1200,7 +1229,55 @@ function Test-PepTemplates {
 }
 
 # ----------------------------------------------------------------------------
-# Update pep-tools.ps1 from a source path or URL
+# Git source helpers — shared by Update-PepTools and Update-PepTemplates
+# ----------------------------------------------------------------------------
+
+# True if $Source looks like a cloneable git remote (repo URL) rather than a
+# single raw-file URL — i.e. it ends in .git, or is an SSH-style git remote.
+function Test-GitSource {
+    param([string]$Source)
+    return ($Source -match '\.git$') -or ($Source -match '^git@') -or ($Source -match '^ssh://')
+}
+
+$script:GitCloneTmpDir = $null
+
+function Remove-GitCloneTmpDir {
+    if ($script:GitCloneTmpDir -and (Test-Path $script:GitCloneTmpDir)) {
+        Remove-Item -Recurse -Force $script:GitCloneTmpDir -ErrorAction SilentlyContinue
+    }
+    $script:GitCloneTmpDir = $null
+}
+
+# Shallow-clones a git source into $script:GitCloneTmpDir, where tools/ and
+# docs/templates/ live under {{cookiecutter.project_slug}}/. Caller is
+# responsible for calling Remove-GitCloneTmpDir (typically via try/finally)
+# once it's done reading from the clone.
+function Invoke-GitClone {
+    param([string]$Url)
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-PepLog ERROR "git is required to fetch from a git source: $Url"
+        exit 1
+    }
+
+    $script:GitCloneTmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("pep-clone-" + [System.Guid]::NewGuid().ToString("N"))
+
+    Write-PepLog INFO "Cloning $Url ..."
+    git clone --depth 1 --quiet $Url $script:GitCloneTmpDir *>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-PepLog ERROR "Failed to clone: $Url"
+        exit 1
+    }
+
+    $root = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}"
+    if (-not (Test-Path $root)) {
+        Write-PepLog ERROR "Expected {{cookiecutter.project_slug}}/ not found in clone: $Url"
+        exit 1
+    }
+}
+
+# ----------------------------------------------------------------------------
+# Update pep-tools.ps1 from a source path, git URL, or raw-file URL
 # ----------------------------------------------------------------------------
 function Update-PepTools {
     param([string[]]$Arguments)
@@ -1217,8 +1294,8 @@ function Update-PepTools {
 
     if (-not $source -and $script:PEP_FRAMEWORK_SOURCE) { $source = $script:PEP_FRAMEWORK_SOURCE }
     if (-not $source) {
-        Write-PepLog ERROR "No source specified. Provide --source <path|url> or set PEP_FRAMEWORK_SOURCE in .peprc.local"
-        exit 1
+        $source = $script:DEFAULT_TEMPLATE_REPO
+        Write-PepLog INFO "No source specified — defaulting to $source"
     }
 
     $dest = "tools/pep-tools.ps1"
@@ -1227,7 +1304,16 @@ function Update-PepTools {
     Write-PepLog INFO "Backed up current tools to $backup"
 
     try {
-        if ($source -match '^https?://') {
+        if (Test-GitSource $source) {
+            Invoke-GitClone $source
+            $srcFile = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools/pep-tools.ps1"
+            if (-not (Test-Path $srcFile)) {
+                Write-PepLog ERROR "Source file not found: $srcFile"
+                Copy-Item $backup $dest -Force
+                exit 1
+            }
+            Copy-Item $srcFile $dest -Force
+        } elseif ($source -match '^https?://') {
             Invoke-WebRequest -Uri $source -OutFile $dest
         } else {
             $srcFile = $source
@@ -1243,6 +1329,8 @@ function Update-PepTools {
         Write-PepLog ERROR "Update failed: $_"
         Copy-Item $backup $dest -Force
         exit 1
+    } finally {
+        Remove-GitCloneTmpDir
     }
 
     Write-PepLog INFO "Updated $dest from $source"
@@ -1272,38 +1360,47 @@ function Update-PepTemplates {
 
     if (-not $source -and $script:PEP_FRAMEWORK_SOURCE) { $source = $script:PEP_FRAMEWORK_SOURCE }
     if (-not $source) {
-        Write-PepLog ERROR "No source specified. Provide --source <path> or set PEP_FRAMEWORK_SOURCE in .peprc.local"
-        exit 1
-    }
-    if ($source -match '^https?://') {
-        Write-PepLog ERROR "URL sources are not supported for update-templates — use a local path."
-        Write-PepLog INFO "Set PEP_FRAMEWORK_SOURCE to the local tools/ directory of your cookiecutter checkout."
-        exit 1
+        $source = $script:DEFAULT_TEMPLATE_REPO
+        Write-PepLog INFO "No source specified — defaulting to $source"
     }
 
-    $srcDir = $source
-    if (Test-Path $source -PathType Leaf) { $srcDir = Split-Path $source -Parent }
-
-    $templateSrc = Join-Path (Split-Path $srcDir -Parent) "docs/templates"
-    if (-not (Test-Path $templateSrc)) {
-        Write-PepLog ERROR "Templates directory not found. Expected at: $templateSrc"
-        exit 1
-    }
-
-    Confirm-Directories
-
-    $updated = 0
-    foreach ($template in @("pep-template.md", "pep-template-ai.md", "pep-template-no-ai.md", "blog-template.md")) {
-        $src = Join-Path $templateSrc $template
-        if (Test-Path $src) {
-            Copy-Item $src (Join-Path $script:TEMPLATE_DIR $template) -Force
-            Write-PepLog INFO "Updated $($script:TEMPLATE_DIR)/$template"
-            $updated++
+    try {
+        $templateSrc = $null
+        if (Test-GitSource $source) {
+            Invoke-GitClone $source
+            $templateSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/docs/templates"
+        } elseif ($source -match '^https?://') {
+            Write-PepLog ERROR "Plain URL sources are not supported for update-templates — use a git URL (ending in .git) or a local path."
+            Write-PepLog INFO "Set PEP_FRAMEWORK_SOURCE to a git URL, or the local tools/ directory of your cookiecutter checkout."
+            exit 1
         } else {
-            Write-PepLog WARN "Not found in source: $src"
+            $srcDir = $source
+            if (Test-Path $source -PathType Leaf) { $srcDir = Split-Path $source -Parent }
+            $templateSrc = Join-Path (Split-Path $srcDir -Parent) "docs/templates"
         }
+
+        if (-not (Test-Path $templateSrc)) {
+            Write-PepLog ERROR "Templates directory not found. Expected at: $templateSrc"
+            exit 1
+        }
+
+        Confirm-Directories
+
+        $updated = 0
+        foreach ($template in @("pep-template.md", "pep-template-ai.md", "pep-template-no-ai.md", "blog-template.md")) {
+            $src = Join-Path $templateSrc $template
+            if (Test-Path $src) {
+                Copy-Item $src (Join-Path $script:TEMPLATE_DIR $template) -Force
+                Write-PepLog INFO "Updated $($script:TEMPLATE_DIR)/$template"
+                $updated++
+            } else {
+                Write-PepLog WARN "Not found in source: $src"
+            }
+        }
+        Write-PepLog INFO "Updated $updated template(s) from $templateSrc"
+    } finally {
+        Remove-GitCloneTmpDir
     }
-    Write-PepLog INFO "Updated $updated template(s) from $templateSrc"
 }
 
 # ----------------------------------------------------------------------------
@@ -1362,8 +1459,9 @@ function Show-PepHelp {
     Write-Host "                                          with-AI-block and without-AI-block variants"
     Write-Host "  strip-ai-block [--dry-run]              Remove the Claude Prompt Context section from existing"
     Write-Host "                                          PEPs (use after switching the template with 'ai-block off')"
-    Write-Host "  update-tools [--source <path|url>]     Update pep-tools.ps1 from source"
-    Write-Host "  update-templates [--source <path>]     Update PEP/BLOG templates from source"
+    Write-Host "  update-tools [--source <path|git|url>] Update pep-tools.ps1 from source (defaults to the"
+    Write-Host "                                          framework's git repo if none is configured)"
+    Write-Host "  update-templates [--source <path|git>] Update PEP/BLOG templates from source (same default)"
     Write-Host "  help                                    Show this help message"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Green
@@ -1383,8 +1481,9 @@ function Show-PepHelp {
     Write-Host "  .\tools\pep-tools.ps1 ai-block on"
     Write-Host "  .\tools\pep-tools.ps1 strip-ai-block --dry-run"
     Write-Host "  .\tools\pep-tools.ps1 strip-ai-block"
+    Write-Host "  .\tools\pep-tools.ps1 update-tools                              # no source — clones the framework's git repo"
     Write-Host "  .\tools\pep-tools.ps1 update-tools --source \path\to\cookiecutter\{{cookiecutter.project_slug}}\tools"
-    Write-Host "  .\tools\pep-tools.ps1 update-templates"
+    Write-Host "  .\tools\pep-tools.ps1 update-templates                          # uses PEP_FRAMEWORK_SOURCE, or the git repo if unset"
     Write-Host ""
     Write-Host "PEP Types:" -ForegroundColor Green
     Write-Host "  Project | Feature | Process | Infrastructure | Documentation | Bug | Enhancement | Research | Security | Performance"

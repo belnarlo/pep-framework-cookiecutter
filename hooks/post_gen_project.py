@@ -51,6 +51,11 @@ def cleanup_optional_features():
         else:
             print("⚠ docs/blogs is not empty, leaving it in place despite blogs being disabled")
 
+    blog_template = 'docs/templates/blog-template.md'
+    if use_blogs.lower() != 'y' and os.path.exists(blog_template):
+        os.remove(blog_template)
+        print(f"✓ Removed {blog_template} (blogs feature disabled)")
+
 def setup_ai_block():
     """Select which PEP template variant (with/without the AI block) becomes the active one."""
     include_ai_block = "{{ cookiecutter.include_ai_block }}"

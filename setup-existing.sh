@@ -726,6 +726,11 @@ install_framework() {
         fi
     fi
 
+    if [ "$ENABLE_BLOGS" = "n" ] && [ -f "$original_dir/docs/templates/blog-template.md" ]; then
+        rm -f "$original_dir/docs/templates/blog-template.md"
+        log "INFO" "Removed docs/templates/blog-template.md (blogs feature disabled)"
+    fi
+
     # Select which PEP template variant (with/without the AI block) becomes active.
     # Both variants are copied in alongside pep-template.md; this just picks the
     # starting one. Switch anytime with: ./tools/pep-tools.sh ai-block on|off
