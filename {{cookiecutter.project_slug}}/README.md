@@ -273,6 +273,38 @@ This swaps `docs/templates/pep-template.md` for the with-AI-block variant (`docs
 Switch back anytime with `./tools/pep-tools.sh ai-block off`, or check the current state with `./tools/pep-tools.sh ai-block status`.
 {% endif -%}
 
+{% if cookiecutter.include_claude_skills == 'y' %}
+### Claude Code Skills
+
+This project includes Claude Code skills in `.claude/skills/` for managing PEPs from inside
+Claude Code — no copy/pasting into a separate chat required:
+
+| Skill | Use it to |
+|-------|-----------|
+| `draft-pep` | Draft a full PEP — real content, not template placeholders — then create it via `new-pep` |
+| `write-blog` | Generate a BLOG by comparing the PEP's plan against actual git history on the feature branch |
+| `pep-standup` | Turn `status`/`next` output into a short narrative summary for standups |
+| `pep-review` | Quality-check a PEP (vague requirements, empty risk tables, broken references) before it leaves Draft |
+
+Just ask, e.g. *"draft a PEP for adding rate limiting to the API"* or *"review PEP 5"* — Claude Code
+picks the matching skill automatically. Edit `.claude/skills/<name>/SKILL.md` directly to adjust
+how a skill behaves. `./tools/pep-tools.sh update-templates` keeps these in sync with upstream;
+`./tools/pep-tools.sh claude-skills off` removes them if you change your mind.
+{% else %}
+### Claude Code Skills
+
+Not installed in this project (`include_claude_skills=n`). To add skills for managing PEPs
+(`draft-pep`, `write-blog`, `pep-standup`, `pep-review`) directly from Claude Code:
+
+```bash
+./tools/pep-tools.sh claude-skills on
+```
+
+This installs `.claude/skills/` from `PEP_FRAMEWORK_SOURCE` if configured, or from
+[the cookiecutter template repo](https://github.com/belnarlo/pep-framework-cookiecutter) by default.
+Once installed, `./tools/pep-tools.sh update-templates` keeps them in sync automatically.
+{% endif %}
+
 ---
 
 ## Getting Help

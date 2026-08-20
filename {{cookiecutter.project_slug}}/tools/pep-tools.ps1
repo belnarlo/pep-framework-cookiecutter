@@ -1156,6 +1156,111 @@ function Remove-PepAiBlock {
 }
 
 # ----------------------------------------------------------------------------
+# Install, remove, or report on Claude Code skills (.claude/skills/) — the
+# runtime counterpart to the include_claude_skills cookiecutter option.
+# Update-PepTemplates only *syncs* skills into projects that already have
+# them, specifically so a passive update-templates run can't silently turn
+# the feature on. This command is the explicit opt-in/opt-out path — the only
+# way to bootstrap skills into a project that predates this feature, or was
+# generated with include_claude_skills=n and wants them later.
+# ----------------------------------------------------------------------------
+function Invoke-PepClaudeSkills {
+    param([string[]]$Arguments)
+
+    $action = if ($Arguments.Count -gt 0 -and $Arguments[0]) { $Arguments[0] } else { "status" }
+
+    if ($action -notin @("on", "off", "status")) {
+        Write-PepLog ERROR "Unknown action: $action"
+        Write-PepLog INFO "Usage: pep-tools.ps1 claude-skills <on|off|status> [--source <path|git|url>]"
+        exit 1
+    }
+
+    $skillsDir = ".claude/skills"
+
+    if ($action -eq "status") {
+        if (Test-Path $skillsDir) {
+            $names = (Get-ChildItem -Path $skillsDir -Directory -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { $_.Name }) -join " "
+            if (-not $names) { $names = "none found" }
+            Write-PepLog INFO "Claude skills: installed ($names)"
+        } else {
+            Write-PepLog INFO "Claude skills: not installed. Run '.\tools\pep-tools.ps1 claude-skills on' to install."
+        }
+        return
+    }
+
+    if ($action -eq "off") {
+        if (Test-Path $skillsDir) {
+            Remove-Item -Recurse -Force $skillsDir
+            if ((Test-Path ".claude") -and -not (Get-ChildItem ".claude" -Force -ErrorAction SilentlyContinue)) {
+                Remove-Item -Force ".claude"
+            }
+            Write-PepLog INFO "Removed .claude/skills"
+        } else {
+            Write-PepLog INFO "Claude skills already not installed"
+        }
+        return
+    }
+
+    # action = on — resolve source the same way as Update-PepTools/Update-PepTemplates:
+    # --source flag > PEP_FRAMEWORK_SOURCE > this framework's default git repo.
+    $rest = $Arguments[1..($Arguments.Count - 1)]
+    $source = $null
+    for ($i = 0; $i -lt $rest.Count; $i++) {
+        if ($rest[$i] -eq "--source") { $source = $rest[$i + 1]; $i++ }
+        else { Write-PepLog ERROR "Unknown option: $($rest[$i])"; exit 1 }
+    }
+
+    if (-not $source -and $script:PEP_FRAMEWORK_SOURCE) { $source = $script:PEP_FRAMEWORK_SOURCE }
+    if (-not $source) {
+        $source = $script:DEFAULT_TEMPLATE_REPO
+        Write-PepLog INFO "No source specified — defaulting to $source"
+    }
+
+    try {
+        $projectRootSrc = $null
+        if (Test-GitSource $source) {
+            Invoke-GitClone $source
+            $projectRootSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}"
+        } elseif ($source -match '^https?://') {
+            $derived = Get-GitUrlFromRawUrl $source
+            if (-not $derived) {
+                Write-PepLog WARN "This source is a single-file URL, not a git repo — claude-skills needs the whole repo."
+                Write-PepLog INFO "Falling back to the default template repo: $script:DEFAULT_TEMPLATE_REPO"
+                $derived = $script:DEFAULT_TEMPLATE_REPO
+            } else {
+                Write-PepLog INFO "Derived git repo from raw-file source: $derived"
+            }
+            Invoke-GitClone $derived
+            $projectRootSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}"
+        } else {
+            $srcDir = $source
+            if (Test-Path $source -PathType Leaf) { $srcDir = Split-Path $source -Parent }
+            $projectRootSrc = Split-Path $srcDir -Parent
+        }
+
+        $skillsSrc = Join-Path $projectRootSrc ".claude/skills"
+        if (-not (Test-Path $skillsSrc)) {
+            Write-PepLog ERROR "Claude skills not found in source. Expected at: $skillsSrc"
+            exit 1
+        }
+
+        New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
+        $installed = 0
+        foreach ($skillDir in Get-ChildItem -Path $skillsSrc -Directory) {
+            $destDir = Join-Path $skillsDir $skillDir.Name
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            Get-ChildItem -Path $skillDir.FullName -Filter "*.md" -File | Copy-Item -Destination $destDir -Force
+            $installed++
+        }
+
+        Write-PepLog INFO "Installed $installed Claude skill(s) from $skillsSrc"
+        Write-PepLog INFO "Future 'update-templates' runs will now keep these in sync automatically"
+    } finally {
+        Remove-GitCloneTmpDir
+    }
+}
+
+# ----------------------------------------------------------------------------
 # Initialize PEP framework in current directory
 # ----------------------------------------------------------------------------
 function Initialize-PepFramework {
@@ -1381,10 +1486,10 @@ function Update-PepTemplates {
     }
 
     try {
-        $templateSrc = $null
+        $projectRootSrc = $null
         if (Test-GitSource $source) {
             Invoke-GitClone $source
-            $templateSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/docs/templates"
+            $projectRootSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}"
         } elseif ($source -match '^https?://') {
             # A raw single-file URL (e.g. saved by an older update-tools,
             # which only ever needed pep-tools.ps1) can't be used directly —
@@ -1398,13 +1503,14 @@ function Update-PepTemplates {
                 Write-PepLog INFO "Derived git repo from raw-file source: $derived"
             }
             Invoke-GitClone $derived
-            $templateSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/docs/templates"
+            $projectRootSrc = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}"
         } else {
             $srcDir = $source
             if (Test-Path $source -PathType Leaf) { $srcDir = Split-Path $source -Parent }
-            $templateSrc = Join-Path (Split-Path $srcDir -Parent) "docs/templates"
+            $projectRootSrc = Split-Path $srcDir -Parent
         }
 
+        $templateSrc = Join-Path $projectRootSrc "docs/templates"
         if (-not (Test-Path $templateSrc)) {
             Write-PepLog ERROR "Templates directory not found. Expected at: $templateSrc"
             exit 1
@@ -1424,6 +1530,25 @@ function Update-PepTemplates {
             }
         }
         Write-PepLog INFO "Updated $updated template(s) from $templateSrc"
+
+        # Sync Claude Code skills too, but only if this project already opted
+        # in (.claude/skills exists locally) — update-templates shouldn't turn
+        # the feature on for projects that were generated with it off.
+        if (Test-Path ".claude/skills") {
+            $skillsSrc = Join-Path $projectRootSrc ".claude/skills"
+            if (Test-Path $skillsSrc) {
+                $skillsUpdated = 0
+                foreach ($skillDir in Get-ChildItem -Path $skillsSrc -Directory) {
+                    $destDir = Join-Path ".claude/skills" $skillDir.Name
+                    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+                    Get-ChildItem -Path $skillDir.FullName -Filter "*.md" -File | Copy-Item -Destination $destDir -Force
+                    $skillsUpdated++
+                }
+                Write-PepLog INFO "Updated $skillsUpdated Claude skill(s) from $skillsSrc"
+            } else {
+                Write-PepLog WARN "Claude skills not found in source: $skillsSrc"
+            }
+        }
     } finally {
         Remove-GitCloneTmpDir
     }
@@ -1485,6 +1610,9 @@ function Show-PepHelp {
     Write-Host "                                          with-AI-block and without-AI-block variants"
     Write-Host "  strip-ai-block [--dry-run]              Remove the Claude Prompt Context section from existing"
     Write-Host "                                          PEPs (use after switching the template with 'ai-block off')"
+    Write-Host "  claude-skills <on|off|status>           Install/remove/report Claude Code skills (.claude/skills/)"
+    Write-Host "                                          — the only way to bootstrap skills into a project that"
+    Write-Host "                                          predates this feature or was generated with it off"
     Write-Host "  update-tools [--source <path|git|url>] Update pep-tools.ps1 from source (defaults to the"
     Write-Host "                                          framework's git repo if none is configured)"
     Write-Host "  update-templates [--source <path|git>] Update PEP/BLOG templates from source (same default)"
@@ -1507,6 +1635,9 @@ function Show-PepHelp {
     Write-Host "  .\tools\pep-tools.ps1 ai-block on"
     Write-Host "  .\tools\pep-tools.ps1 strip-ai-block --dry-run"
     Write-Host "  .\tools\pep-tools.ps1 strip-ai-block"
+    Write-Host "  .\tools\pep-tools.ps1 claude-skills on                          # install Claude Code skills into an existing project"
+    Write-Host "  .\tools\pep-tools.ps1 claude-skills status"
+    Write-Host "  .\tools\pep-tools.ps1 claude-skills off"
     Write-Host "  .\tools\pep-tools.ps1 update-tools                              # no source — clones the framework's git repo"
     Write-Host "  .\tools\pep-tools.ps1 update-tools --source \path\to\cookiecutter\{{cookiecutter.project_slug}}\tools"
     Write-Host "  .\tools\pep-tools.ps1 update-templates                          # uses PEP_FRAMEWORK_SOURCE, or the git repo if unset"
@@ -1542,6 +1673,7 @@ switch ($Command) {
     "fix-naming"       { Invoke-PepFixNaming -Arguments $Rest }
     "ai-block"         { Invoke-PepAiBlock -Arguments $Rest }
     "strip-ai-block"   { Remove-PepAiBlock -Arguments $Rest }
+    "claude-skills"    { Invoke-PepClaudeSkills -Arguments $Rest }
     "update-tools"     { Update-PepTools -Arguments $Rest }
     "update-templates" { Update-PepTemplates -Arguments $Rest }
     "help"             { Show-PepHelp }

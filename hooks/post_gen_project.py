@@ -69,6 +69,18 @@ def setup_ai_block():
         print("✓ AI block left out of pep-template.md (default)")
     print("  Both variants remain in docs/templates/ — switch anytime with ./tools/pep-tools.sh ai-block on|off")
 
+def setup_claude_skills():
+    """Remove the Claude Code skills directory if the user opted out."""
+    include_claude_skills = "{{ cookiecutter.include_claude_skills }}"
+
+    if include_claude_skills.lower() != 'y':
+        if os.path.isdir('.claude/skills'):
+            run_command("rm -rf .claude/skills", "Removed .claude/skills (Claude skills disabled)")
+        if os.path.isdir('.claude') and not os.listdir('.claude'):
+            os.rmdir('.claude')
+    else:
+        print("✓ Claude Code skills installed in .claude/skills/")
+
 def setup_git():
     """Initialize git repository if needed."""
     print("Setting up git integration...")
@@ -107,7 +119,8 @@ def show_next_steps():
     project_slug = "{{ cookiecutter.project_slug }}"
     use_git_hooks = "{{ cookiecutter.use_git_hooks }}"
     use_blogs = "{{ cookiecutter.use_blogs }}"
-    
+    include_claude_skills = "{{ cookiecutter.include_claude_skills }}"
+
     print("\n" + "="*60)
     print(f"🎉 {project_name} is ready!")
     print("="*60)
@@ -132,7 +145,14 @@ def show_next_steps():
         print("   Branch naming: feature/pep-XXX-description")
         print("   Commit format: pep-XXX: description")
         print("   Validation: Automatic PEP reference checking")
-    
+
+    if include_claude_skills.lower() == 'y':
+        print("\n🤖 Claude Code skills installed (.claude/skills/):")
+        print("   draft-pep    — draft a full PEP instead of leaving template placeholders")
+        print("   write-blog   — generate a BLOG from the PEP's plan + real git history")
+        print("   pep-standup  — narrative status summary for meeting prep")
+        print("   pep-review   — quality check a PEP before it leaves Draft")
+
     print("\n⚙️  Configuration:")
     print("   .peprc                             # Edit project settings")
     
@@ -157,6 +177,9 @@ def main():
         print()
 
         setup_ai_block()
+        print()
+
+        setup_claude_skills()
         print()
 
         setup_git()

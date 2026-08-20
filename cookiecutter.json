@@ -10,6 +10,7 @@
     "require_pep_reference": "n",
     "use_blogs": ["y", "n"],
     "include_ai_block": ["n", "y"],
+    "include_claude_skills": ["n", "y"],
     "zabbix_host": "",
     "grafana_url": "",
     "slack_webhook": "",

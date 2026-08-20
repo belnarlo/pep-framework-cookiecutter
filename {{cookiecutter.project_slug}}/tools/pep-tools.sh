@@ -1099,6 +1099,111 @@ strip_ai_block() {
     fi
 }
 
+# Install, remove, or report on Claude Code skills (.claude/skills/) — the
+# runtime counterpart to the include_claude_skills cookiecutter option.
+# update-templates only *syncs* skills into projects that already have them,
+# specifically so a passive `update-templates` run can't silently turn the
+# feature on. This command is the explicit opt-in/opt-out path — the only way
+# to bootstrap skills into a project that predates this feature, or was
+# generated with include_claude_skills=n and wants them later.
+claude_skills() {
+    local action="${1:-status}"
+    shift || true
+
+    case "$action" in
+        on|off|status) ;;
+        *)
+            log "ERROR" "Unknown action: $action"
+            log "INFO" "Usage: $0 claude-skills <on|off|status> [--source <path|git|url>]"
+            exit 1
+            ;;
+    esac
+
+    if [ "$action" = "status" ]; then
+        if [ -d ".claude/skills" ]; then
+            local names
+            names=$(find .claude/skills -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ')
+            log "INFO" "Claude skills: installed (${names:-none found})"
+        else
+            log "INFO" "Claude skills: not installed. Run '$0 claude-skills on' to install."
+        fi
+        return
+    fi
+
+    if [ "$action" = "off" ]; then
+        if [ -d ".claude/skills" ]; then
+            rm -rf ".claude/skills"
+            if [ -d ".claude" ] && [ -z "$(ls -A .claude)" ]; then
+                rmdir ".claude"
+            fi
+            log "INFO" "Removed .claude/skills"
+        else
+            log "INFO" "Claude skills already not installed"
+        fi
+        return
+    fi
+
+    # action = on — resolve source the same way as update-tools/update-templates:
+    # --source flag > PEP_FRAMEWORK_SOURCE > this framework's default git repo.
+    local source=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --source) source="$2"; shift 2 ;;
+            *) log "ERROR" "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$source" ] && [ -n "${PEP_FRAMEWORK_SOURCE:-}" ]; then
+        source="$PEP_FRAMEWORK_SOURCE"
+    fi
+    if [ -z "$source" ]; then
+        source="$DEFAULT_TEMPLATE_REPO"
+        log "INFO" "No source specified — defaulting to $source"
+    fi
+
+    local project_root_src
+    if is_git_source "$source"; then
+        clone_git_source "$source"
+        project_root_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}"
+    elif echo "$source" | grep -qE '^https?://'; then
+        local derived
+        derived=$(derive_git_url_from_raw "$source")
+        if [ -z "$derived" ]; then
+            log "WARN" "This source is a single-file URL, not a git repo — claude-skills needs the whole repo."
+            log "INFO" "Falling back to the default template repo: $DEFAULT_TEMPLATE_REPO"
+            derived="$DEFAULT_TEMPLATE_REPO"
+        else
+            log "INFO" "Derived git repo from raw-file source: $derived"
+        fi
+        clone_git_source "$derived"
+        project_root_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}"
+    else
+        local src_dir="$source"
+        [ -f "$source" ] && src_dir="$(dirname "$source")"
+        project_root_src="$(cd "${src_dir}/.." 2>/dev/null && pwd)" || true
+    fi
+
+    local skills_src="${project_root_src:+${project_root_src}/.claude/skills}"
+    if [ -z "$skills_src" ] || [ ! -d "$skills_src" ]; then
+        log "ERROR" "Claude skills not found in source. Expected at: ${skills_src:-<unresolved from $source>}"
+        exit 1
+    fi
+
+    mkdir -p ".claude/skills"
+    local installed=0
+    for skill_dir in "$skills_src"/*/; do
+        [ -d "$skill_dir" ] || continue
+        local skill_name
+        skill_name="$(basename "$skill_dir")"
+        mkdir -p ".claude/skills/${skill_name}"
+        cp "${skill_dir}"*.md ".claude/skills/${skill_name}/" 2>/dev/null
+        installed=$((installed + 1))
+    done
+
+    log "INFO" "Installed ${installed} Claude skill(s) from ${skills_src}"
+    log "INFO" "Future 'update-templates' runs will now keep these in sync automatically"
+}
+
 # Show Draft/Active PEPs grouped by priority — a work queue for deciding
 # what to pick up next. Ignores terminal statuses (Implemented/Rejected/
 # Superseded) entirely.
@@ -1439,10 +1544,10 @@ update_templates() {
         log "INFO" "No source specified — defaulting to $source"
     fi
 
-    local template_src
+    local project_root_src
     if is_git_source "$source"; then
         clone_git_source "$source"
-        template_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/docs/templates"
+        project_root_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}"
     elif echo "$source" | grep -qE '^https?://'; then
         # A raw single-file URL (e.g. saved by an older update-tools, which
         # only ever needed pep-tools.sh) can't be used directly — try to
@@ -1457,12 +1562,14 @@ update_templates() {
             log "INFO" "Derived git repo from raw-file source: $derived"
         fi
         clone_git_source "$derived"
-        template_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/docs/templates"
+        project_root_src="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}"
     else
         local src_dir="$source"
         [ -f "$source" ] && src_dir="$(dirname "$source")"
-        template_src="$(cd "${src_dir}/../docs/templates" 2>/dev/null && pwd)" || true
+        project_root_src="$(cd "${src_dir}/.." 2>/dev/null && pwd)" || true
     fi
+
+    local template_src="${project_root_src:+${project_root_src}/docs/templates}"
 
     if [ -z "$template_src" ] || [ ! -d "$template_src" ]; then
         log "ERROR" "Templates directory not found. Expected at: ${template_src:-<unresolved from $source>}"
@@ -1483,6 +1590,27 @@ update_templates() {
     done
 
     log "INFO" "Updated ${updated} template(s) from ${template_src}"
+
+    # Sync Claude Code skills too, but only if this project already opted in
+    # (.claude/skills exists locally) — update-templates shouldn't turn the
+    # feature on for projects that were generated with it off.
+    if [ -d ".claude/skills" ]; then
+        local skills_src="${project_root_src}/.claude/skills"
+        if [ -d "$skills_src" ]; then
+            local skills_updated=0
+            for skill_dir in "$skills_src"/*/; do
+                [ -d "$skill_dir" ] || continue
+                local skill_name
+                skill_name="$(basename "$skill_dir")"
+                mkdir -p ".claude/skills/${skill_name}"
+                cp "${skill_dir}"*.md ".claude/skills/${skill_name}/" 2>/dev/null
+                skills_updated=$((skills_updated + 1))
+            done
+            log "INFO" "Updated ${skills_updated} Claude skill(s) from ${skills_src}"
+        else
+            log "WARN" "Claude skills not found in source: ${skills_src}"
+        fi
+    fi
 }
 
 # Setup git hooks
@@ -1538,6 +1666,9 @@ ${GREEN}Framework commands:${NC}
                                                with-AI-block and without-AI-block variants
   ${YELLOW}strip-ai-block${NC} [--dry-run]              Remove the Claude Prompt Context section from existing
                                                PEPs (use after switching the template with 'ai-block off')
+  ${YELLOW}claude-skills${NC} <on|off|status>           Install/remove/report Claude Code skills (.claude/skills/)
+                                               — the only way to bootstrap skills into a project that
+                                               predates this feature or was generated with it off
   ${YELLOW}update-tools${NC} [--source <path|git|url>]  Update pep-tools.sh from source (defaults to the
                                                framework's git repo if none is configured)
   ${YELLOW}update-templates${NC} [--source <path|git>]  Update PEP/BLOG templates from source (same default)
@@ -1558,6 +1689,9 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                     
   $0 ai-block on                             # switch to the with-AI-block PEP template
   $0 strip-ai-block --dry-run                # preview removing the AI block from existing PEPs
   $0 strip-ai-block                          # apply
+  $0 claude-skills on                        # install Claude Code skills into an existing project
+  $0 claude-skills status                    # check whether skills are installed
+  $0 claude-skills off                       # remove them
   $0 update-tools                            # no source configured — clones the framework's git repo
   $0 update-tools --source /path/to/cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
   $0 update-templates                        # uses PEP_FRAMEWORK_SOURCE, or the git repo if unset
@@ -1590,6 +1724,10 @@ main() {
         "strip-ai-block")
             shift
             strip_ai_block "$@"
+            ;;
+        "claude-skills")
+            shift
+            claude_skills "$@"
             ;;
         "new-pep")
             shift
