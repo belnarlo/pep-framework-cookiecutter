@@ -195,7 +195,10 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 ./tools/pep-tools.sh commit <pep-num> [message]   # Commit with correct prefix
 ./tools/pep-tools.sh list                         # List all PEPs
 ./tools/pep-tools.sh status [--since YYYY-MM-DD]  # Status summary, by-status listing, flags bad
-                                                   # statuses, and (with --since) a changes report
+                             [--show-all]          # statuses, and (with --since) a changes report.
+                                                   # Implemented/Rejected/Superseded PEPs closed more
+                                                   # than 60 days ago are collapsed to a summary line;
+                                                   # --show-all lists them in full
 ./tools/pep-tools.sh next                         # Draft/Active PEPs by priority — what to work on next
 ./tools/pep-tools.sh stubs [--threshold N]        # PEPs still mostly template boilerplate
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename PEPs to current scheme

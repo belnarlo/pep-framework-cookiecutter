@@ -126,6 +126,18 @@ get_pep_num_from_file() {
     basename "$1" | grep -oE '[0-9]{3}' | head -1
 }
 
+# Number of days between a YYYY-MM-DD date and today. Portable across BSD date
+# (macOS) and GNU date (Linux). Echoes nothing if the date is empty/unparseable,
+# so callers can treat "unknown age" as "don't collapse it".
+days_since() {
+    local d="$1"
+    [ -z "$d" ] && return
+    local epoch
+    epoch=$(date -j -f "%Y-%m-%d" "$d" "+%s" 2>/dev/null) || epoch=$(date -d "$d" "+%s" 2>/dev/null)
+    [ -z "$epoch" ] && return
+    echo $(( ( $(date "+%s") - epoch ) / 86400 ))
+}
+
 # Ensure required directories exist
 ensure_directories() {
     local dirs=("$PEP_DIR" "$TEMPLATE_DIR" "tools/git-hooks")
@@ -814,10 +826,12 @@ list_peps() {
 # and (with --since) a changes-since-date section — built for meeting prep.
 show_status() {
     local since=""
+    local show_all=false
     while [ $# -gt 0 ]; do
         case "$1" in
             --since) since="$2"; shift 2 ;;
-            *) log "ERROR" "Unknown option: $1"; log "INFO" "Usage: $0 status [--since YYYY-MM-DD]"; exit 1 ;;
+            --show-all) show_all=true; shift ;;
+            *) log "ERROR" "Unknown option: $1"; log "INFO" "Usage: $0 status [--since YYYY-MM-DD] [--show-all]"; exit 1 ;;
         esac
     done
 
@@ -839,12 +853,22 @@ show_status() {
     echo "============================================="
 
     local total=0
+    local counts=()
     for status in "${known_statuses[@]}"; do
         local count
         count=$(grep -rl "^\*\*Status:\*\* $status" "$PEP_DIR"/pep-*.md 2>/dev/null | wc -l | tr -d ' ')
-        printf "%-12s: %d\n" "$status" "$count"
+        counts+=("$count")
         total=$((total + count))
     done
+
+    local open_count=$((counts[0] + counts[1]))
+    local closed_count=$((counts[2] + counts[3] + counts[4]))
+
+    printf "%-30s: %d\n" "Open (Draft + Active)" "$open_count"
+    for i in "${!known_statuses[@]}"; do
+        printf "%-12s: %d\n" "${known_statuses[$i]}" "${counts[$i]}"
+    done
+    printf "%-30s: %d\n" "Closed (Implemented + Rejected + Superseded)" "$closed_count"
 
     echo "-------------"
     printf "%-12s: %d\n" "Total" "$total"
@@ -881,6 +905,13 @@ show_status() {
 
     # Grouped listing by status, with ID + title + abstract — formatted for
     # copy/paste directly into meeting notes.
+    #
+    # Closed statuses (Implemented/Rejected/Superseded) accumulate over the life
+    # of a project, so by default we collapse ones closed a long time ago into a
+    # summary line rather than listing them in full — --show-all disables this.
+    local closed_collapse_days=60
+    local terminal_statuses=("Implemented" "Rejected" "Superseded")
+
     echo ""
     echo -e "${BLUE}PEPs by Status${NC}"
     echo "=============="
@@ -892,9 +923,34 @@ show_status() {
         done
         [ ${#files[@]} -eq 0 ] && continue
 
+        local is_terminal=false
+        for t in "${terminal_statuses[@]}"; do
+            [ "$status" = "$t" ] && is_terminal=true && break
+        done
+
+        local shown=("${files[@]}")
+        local old_count=0
+        if [ "$is_terminal" = true ] && [ "$show_all" = false ]; then
+            shown=()
+            for pep in "${files[@]}"; do
+                local upd age
+                upd=$(get_pep_field "$pep" "Updated")
+                age=$(days_since "$upd")
+                if [ -n "$age" ] && [ "$age" -gt "$closed_collapse_days" ]; then
+                    old_count=$((old_count + 1))
+                else
+                    shown+=("$pep")
+                fi
+            done
+        fi
+
         echo ""
-        echo "## $status (${#files[@]})"
-        for pep in "${files[@]}"; do
+        if [ "$old_count" -gt 0 ]; then
+            echo "## $status (${#files[@]}): ${#shown[@]} shown below, ${old_count} closed more than ${closed_collapse_days} days ago — run 'status --show-all' to list them."
+        else
+            echo "## $status (${#files[@]})"
+        fi
+        for pep in "${shown[@]}"; do
             local num pep_id title abstract
             num=$(get_pep_num_from_file "$pep")
             pep_id=$(get_pep_id "$((10#$num))")
@@ -933,10 +989,10 @@ show_status() {
                 Implemented|Rejected|Superseded) is_terminal=true ;;
             esac
 
-            if [ -n "$upd" ] && [[ ! "$upd" < "$since" ]]; then
+            if [ -n "$upd" ] && [[ ! "$upd" < "$since" ]] && [ "$is_new" = false ]; then
                 if [ "$is_terminal" = true ]; then
                     completed+=("$pep")
-                elif [ "$is_new" = false ]; then
+                else
                     updated+=("$pep")
                 fi
             fi
@@ -947,18 +1003,33 @@ show_status() {
         if [ ${#raised[@]} -eq 0 ]; then
             echo "  None"
         else
-            for pep in "${raised[@]}"; do
-                local num pep_id title created
-                num=$(get_pep_num_from_file "$pep")
-                pep_id=$(get_pep_id "$((10#$num))")
-                title=$(get_pep_field "$pep" "Title")
-                created=$(get_pep_field "$pep" "Created")
-                echo "  - ${pep_id}: ${title} (created ${created})"
+            for status in "${known_statuses[@]}"; do
+                local group=()
+                for pep in "${raised[@]}"; do
+                    [ "$(get_pep_field "$pep" "Status")" = "$status" ] && group+=("$pep")
+                done
+                [ ${#group[@]} -eq 0 ] && continue
+
+                local sorted_lines
+                sorted_lines=$(
+                    for pep in "${group[@]}"; do
+                        echo "$(get_pep_field "$pep" "Created")|${pep}"
+                    done | sort
+                )
+
+                echo "  Now ${status} (${#group[@]}):"
+                while IFS='|' read -r created pep; do
+                    local num pep_id title
+                    num=$(get_pep_num_from_file "$pep")
+                    pep_id=$(get_pep_id "$((10#$num))")
+                    title=$(get_pep_field "$pep" "Title")
+                    echo "    - ${pep_id}: ${title} (created ${created})"
+                done <<< "$sorted_lines"
             done
         fi
 
         echo ""
-        echo "Completed (${#completed[@]}):"
+        echo "Completed — pre-existing PEPs closed (${#completed[@]}):"
         if [ ${#completed[@]} -eq 0 ]; then
             echo "  None"
         else
@@ -1524,9 +1595,14 @@ ${GREEN}PEP commands:${NC}
   ${YELLOW}commit${NC} <pep-num> [message]              Commit with correct PEP message format
 $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [pep-num]         Create implementation blog for a PEP")
   ${YELLOW}list${NC}                                    List all PEPs with status
-  ${YELLOW}status${NC} [--since YYYY-MM-DD]              Status summary, by-status listing (copy/paste-ready),
-                                               flags PEPs with an unexpected/missing status, and with
-                                               --since adds a Changes section (raised/completed/updated)
+  ${YELLOW}status${NC} [--since YYYY-MM-DD] [--show-all]  Status summary (with an Open/Closed rollup), by-status
+                                               listing (copy/paste-ready), flags PEPs with an unexpected/
+                                               missing status, and with --since adds a Changes section:
+                                               new PEPs raised (grouped by current status), pre-existing
+                                               PEPs closed, and other updates. Implemented/Rejected/
+                                               Superseded PEPs closed more than 60 days ago are collapsed
+                                               to a summary line in the by-status listing — pass
+                                               --show-all to list every PEP in full
   ${YELLOW}next${NC}                                    Draft/Active PEPs grouped by priority — what to work on next
   ${YELLOW}stubs${NC} [--threshold N]                   List PEPs still mostly template boilerplate (default 85%)
   ${YELLOW}migrate${NC} [--dry-run]                     Rename existing PEPs to current naming scheme
@@ -1549,6 +1625,7 @@ ${GREEN}Examples:${NC}
   $0 commit 5 "Add Prometheus scrape config" # commit with correct prefix
 $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                           # create blog-003 for pep-005")
   $0 status --since 2026-07-01                # meeting prep: summary + by-status list + changes since date
+  $0 status --show-all                       # by-status list with no old-closed-PEPs collapsing
   $0 next                                    # what to pick up next, by priority
   $0 stubs                                   # PEPs that still need fleshing out
   $0 migrate --dry-run                       # preview rename of old-format PEPs
