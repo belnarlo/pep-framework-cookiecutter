@@ -45,6 +45,7 @@ cd your-new-project
 | `project_type` | Project category | infrastructure / homelab / monitoring / software / automation / general |
 | `use_blogs` | Enable Build Logs feature | y / n (set n for work repos that don't need implementation logs) |
 | `include_ai_block` | Include the Claude Prompt Context section in the PEP template | y / n (default n — toggle anytime with `ai-block on\|off`) |
+| `include_claude_skills` | Install Claude Code skills (`.claude/skills/`) for managing PEPs from Claude Code | y / n (default n) |
 | `default_editor` | Preferred editor | vi / vim / nano / code / zed / emacs |
 | `use_git_hooks` | Install git commit validation hook | y / n |
 | `require_pep_reference` | Strict mode: all commits must reference a PEP | y / n |
@@ -88,6 +89,12 @@ your-new-project/
 ├── .peprc                          # Project config: PROJECT_CODE, REPO_CODE, ENABLE_BLOGS
 ├── .peprc.local.example            # Personal config template (copy to .peprc.local)
 ├── README.md                       # Project documentation
+├── .claude/
+│   └── skills/                     # Claude Code skills (only if include_claude_skills=y)
+│       ├── draft-pep/SKILL.md      # Draft a full PEP instead of template placeholders
+│       ├── write-blog/SKILL.md     # Generate a BLOG from the PEP's plan + git history
+│       ├── pep-standup/SKILL.md    # Narrative status summary for meeting prep
+│       └── pep-review/SKILL.md     # Quality check a PEP before it leaves Draft
 ├── docs/
 │   ├── peps/                       # Project Enhancement Packages
 │   ├── blogs/                      # Build Logs (only if ENABLE_BLOGS=y)
@@ -190,6 +197,10 @@ cp -r ../temp/{docs,tools,.peprc,.peprc.local.example,.gitignore} .
 
 # Re-install the git hook to pick up the new commit format
 ./tools/pep-tools.sh init
+
+# Want Claude Code skills too? update-tools/update-templates alone won't add them
+# (see "Claude AI Integration" below) — install explicitly:
+./tools/pep-tools.sh claude-skills on
 ```
 
 ### Projects without `update-tools` (original version)
@@ -317,6 +328,39 @@ With the block enabled:
 #    "Using the context below, help me design the migration strategy..."
 ```
 
+The **Claude Prompt Context** block is a copy/paste bridge into a separate chat. **Claude Code
+skills** (below) are the alternative for people working inside Claude Code directly — no copying
+required, and the assistant can read/write PEP files and run `pep-tools.sh` itself.
+
+### Claude Code Skills
+
+Set `include_claude_skills=y` when generating the project (default `n`) to install a
+`.claude/skills/` directory with four skills for managing PEPs from inside Claude Code:
+
+| Skill | Use it to |
+|-------|-----------|
+| `draft-pep` | Draft a full PEP — real Motivation/Specification/Risks content, not template placeholders — then hand off to `new-pep` for numbering/filename |
+| `write-blog` | Generate a BLOG by comparing the PEP's plan against actual `git log`/`git diff` on the feature branch |
+| `pep-standup` | Turn `status --since`/`next` output into a short narrative summary for standups or meeting prep |
+| `pep-review` | Quality-check a PEP's content (vague requirements, unmeasurable success criteria, empty risk tables, broken cross-references) before it leaves Draft |
+
+Each skill wraps the relevant `pep-tools.sh` command for the mechanical parts (numbering, filename,
+ID format) and adds judgment for the parts that need it (drafting, comparing, reviewing). They're
+plain Markdown files — read or edit them directly in `.claude/skills/<name>/SKILL.md`.
+
+For projects generated (or previously updated) without this feature — including any project that
+predates it — install skills explicitly:
+
+```bash
+./tools/pep-tools.sh claude-skills on      # install from PEP_FRAMEWORK_SOURCE, or this repo by default
+./tools/pep-tools.sh claude-skills status  # check what's installed
+./tools/pep-tools.sh claude-skills off     # remove
+```
+
+`update-templates` only *syncs* skills for projects that already have `.claude/skills/` — it won't
+silently turn the feature on for projects that opted out. `claude-skills on` is the explicit,
+one-time opt-in; after that, regular `update-templates` runs keep the installed skills current.
+
 ---
 
 ## Repository Structure (template developers)
@@ -333,6 +377,7 @@ pep-framework-cookiecutter/
     ├── .peprc                         # Templated project config
     ├── .peprc.local.example           # Personal config example
     ├── README.md                      # Generated project README
+    ├── .claude/skills/                # Claude Code skills (draft-pep, write-blog, pep-standup, pep-review)
     ├── docs/templates/                # PEP and BLOG templates
     └── tools/
         ├── pep-tools.sh               # Management CLI (v2.0)
