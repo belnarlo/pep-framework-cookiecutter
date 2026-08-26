@@ -17,11 +17,11 @@ CONFIG_FILE=".peprc"
 DEFAULT_TEMPLATE_REPO="https://github.com/belnarlo/pep-framework-cookiecutter.git"
 
 # Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+NC=$'\033[0m' # No Color
 
 # Source configuration: project-level first, then personal overrides
 if [ -f "$CONFIG_FILE" ]; then
