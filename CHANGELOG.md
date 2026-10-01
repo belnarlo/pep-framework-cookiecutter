@@ -13,6 +13,18 @@
   (`MERGE_HEAD`).
   All other checks are unchanged.
 
+### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
+
+- `new-pep` takes the next free number across all local and remote-tracking
+  branches (read-only, `git ls-tree`). Remote refs are as of the last
+  `git fetch`.
+- `new-pep --type T --priority P --abstract TEXT --no-open` for scripted use.
+  Invalid `--type` or `--priority` values are errors, not silent defaults.
+  The editor never opens without a terminal. Titles, abstracts and author
+  names containing `&` or `|` are now escaped correctly.
+- `new-branch --here`, or `BRANCH_PER_PEP="false"` in `.peprc`, stays on the
+  current branch instead of creating `feature/<pep>`.
+
 ### Changed
 
 - `update-tools` now also refreshes `tools/git-hooks/commit-msg` and reinstalls
@@ -21,7 +33,8 @@
 - New `update-hooks [--source <path|git>]` command does just the hook refresh.
 - Hook installation uses `git rev-parse --git-path`, so worktrees and
   `core.hooksPath` work.
-- `pep-tools.sh` and `pep-tools.ps1` version bumped to 2.1.
+- `pep-tools.sh` and `pep-tools.ps1` version bumped to 2.1. The two scripts
+  must stay feature-identical; the tests run the same assertions on both.
 
 ### Getting the fix in an existing repo
 

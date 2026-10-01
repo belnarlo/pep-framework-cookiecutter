@@ -210,6 +210,12 @@ function Remove-PepBlogArtifacts {
     }
 }
 
+# Read-Host that returns "" instead of $null/throwing when stdin is closed
+function Read-PepInput {
+    param([string]$Prompt)
+    try { return "$(Read-Host $Prompt)" } catch { return "" }
+}
+
 function Get-NextPepNumber {
     $maxNum = 0
     if (Test-Path $script:PEP_DIR) {
@@ -220,7 +226,39 @@ function Get-NextPepNumber {
             }
         }
     }
+
+    # Also consider every local and remote branch (read-only), so two branches
+    # don't both raise the same number. Remote refs are as of the last fetch.
+    $refMax = Get-MaxPepNumberInRefs
+    if ($refMax -gt $maxNum) {
+        Write-PepLog INFO "Highest PEP number on other branches: $refMax (last fetched state)"
+        $maxNum = $refMax
+    }
+
     return $maxNum + 1
+}
+
+# Highest PEP number for this repo's prefix across refs/heads and refs/remotes.
+# Read-only: git for-each-ref + git ls-tree, no fetch, no checkout. Identical
+# trees are listed once. Returns 0 outside a git repo or when nothing matches.
+function Get-MaxPepNumberInRefs {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return 0 }
+    git rev-parse --git-dir *>$null
+    if ($LASTEXITCODE -ne 0) { return 0 }
+
+    $prefix = [regex]::Escape((Get-FilePrefix))
+    $max = 0
+    $trees = @(git for-each-ref --format='%(tree)' refs/heads refs/remotes 2>$null | Where-Object { $_ } | Sort-Object -Unique)
+    foreach ($tree in $trees) {
+        foreach ($path in @(git ls-tree --name-only $tree "$($script:PEP_DIR)/" 2>$null)) {
+            $name = ($path -split '/')[-1]
+            if ($name -match "^$prefix(\d{3})-") {
+                $n = [int]$matches[1]
+                if ($n -gt $max) { $max = $n }
+            }
+        }
+    }
+    return $max
 }
 
 function Get-NextBlogNumber {
@@ -243,9 +281,30 @@ function New-Pep {
     param([string[]]$Arguments)
 
     $openCode = $false
+    $noOpen = $false
+    $flagType = $null
+    $flagPriority = $null
+    $flagAbstract = $null
     $args2 = @()
-    foreach ($a in $Arguments) {
-        if ($a -eq "--code") { $openCode = $true } else { $args2 += $a }
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        $a = $Arguments[$i]
+        switch -Regex ($a) {
+            '^--code$'    { $openCode = $true }
+            '^--no-open$' { $noOpen = $true }
+            '^--(type|priority|abstract)$' {
+                if ($i + 1 -ge $Arguments.Count) {
+                    Write-PepLog ERROR "$a requires a value"
+                    exit 1
+                }
+                $i++
+                Set-Variable -Name ("flag" + (Get-Culture).TextInfo.ToTitleCase($a.Substring(2))) -Value $Arguments[$i]
+            }
+            '^--(type|priority|abstract)=' {
+                $name = $a.Substring(2, $a.IndexOf('=') - 2)
+                Set-Variable -Name ("flag" + (Get-Culture).TextInfo.ToTitleCase($name)) -Value $a.Substring($a.IndexOf('=') + 1)
+            }
+            default       { $args2 += $a }
+        }
     }
 
     $pepNum = $null
@@ -254,11 +313,11 @@ function New-Pep {
     if ($args2.Count -eq 0) {
         $pepNum = Get-NextPepNumber
         Write-PepLog INFO "Auto-assigned PEP number: $pepNum"
-        $title = Read-Host "Enter PEP title"
+        $title = Read-PepInput "Enter PEP title"
     } elseif ($args2.Count -eq 1) {
         if ($args2[0] -match '^\d+$') {
             $pepNum = [int]$args2[0]
-            $title = Read-Host "Enter PEP title"
+            $title = Read-PepInput "Enter PEP title"
         } else {
             $title = $args2[0]
             $pepNum = Get-NextPepNumber
@@ -270,11 +329,12 @@ function New-Pep {
             $title = $args2[1]
         } else {
             Write-PepLog ERROR "When providing two arguments, first must be a number"
-            Write-PepLog INFO "Usage: pep-tools.ps1 new-pep [--code] [number] [title]"
+            Write-PepLog INFO "Usage: pep-tools.ps1 new-pep [--code] [--no-open] [--type T] [--priority P] [--abstract TEXT] [number] [title]"
             exit 1
         }
     } else {
         Write-PepLog ERROR "Too many arguments"
+        Write-PepLog INFO "Usage: pep-tools.ps1 new-pep [--code] [--no-open] [--type T] [--priority P] [--abstract TEXT] [number] [title]"
         exit 1
     }
 
@@ -284,25 +344,59 @@ function New-Pep {
     }
 
     $pepTypes = @("Project", "Feature", "Process", "Infrastructure", "Documentation", "Bug", "Enhancement", "Research", "Security", "Performance")
-    Write-Host ""
-    Write-Host "Select PEP type:"
-    for ($i = 0; $i -lt $pepTypes.Count; $i++) {
-        Write-Host ("  {0,2}) {1}" -f ($i + 1), $pepTypes[$i])
-    }
-    $typeChoice = Read-Host "Type [1-$($pepTypes.Count), default 2 (Feature)]"
-    $pepType = "Feature"
-    if ($typeChoice -match '^\d+$' -and [int]$typeChoice -ge 1 -and [int]$typeChoice -le $pepTypes.Count) {
-        $pepType = $pepTypes[[int]$typeChoice - 1]
+
+    # Type: --type (name or number) or prompt
+    $pepType = $null
+    if ($flagType) {
+        if ($flagType -match '^\d+$' -and [int]$flagType -ge 1 -and [int]$flagType -le $pepTypes.Count) {
+            $pepType = $pepTypes[[int]$flagType - 1]
+        } else {
+            $pepType = $pepTypes | Where-Object { $_ -ieq $flagType } | Select-Object -First 1
+        }
+        if (-not $pepType) {
+            Write-PepLog ERROR "Unknown --type '$flagType' (valid: $($pepTypes -join ' '))"
+            exit 1
+        }
     } else {
-        Write-PepLog INFO "Defaulting to type: $pepType"
+        Write-Host ""
+        Write-Host "Select PEP type:"
+        for ($i = 0; $i -lt $pepTypes.Count; $i++) {
+            Write-Host ("  {0,2}) {1}" -f ($i + 1), $pepTypes[$i])
+        }
+        $typeChoice = Read-PepInput "Type [1-$($pepTypes.Count), default 2 (Feature)]"
+        $pepType = "Feature"
+        if ($typeChoice -match '^\d+$' -and [int]$typeChoice -ge 1 -and [int]$typeChoice -le $pepTypes.Count) {
+            $pepType = $pepTypes[[int]$typeChoice - 1]
+        } else {
+            Write-PepLog INFO "Defaulting to type: $pepType"
+        }
     }
 
-    $priorityChoice = (Read-Host "Priority [H)igh / M)edium / L)ow, default M]").ToLower()
-    $pepPriority = "Medium"
-    if ($priorityChoice -eq "h" -or $priorityChoice -eq "high") { $pepPriority = "High" }
-    elseif ($priorityChoice -eq "l" -or $priorityChoice -eq "low") { $pepPriority = "Low" }
+    # Priority: --priority or prompt
+    if ($flagPriority) {
+        $priorityChoice = $flagPriority.ToLower()
+    } else {
+        $priorityChoice = (Read-PepInput "Priority [H)igh / M)edium / L)ow, default M]").ToLower()
+    }
+    switch ($priorityChoice) {
+        { $_ -in "h", "high" }         { $pepPriority = "High" }
+        { $_ -in "l", "low" }          { $pepPriority = "Low" }
+        { $_ -in "m", "medium", "" }   { $pepPriority = "Medium" }
+        default {
+            if ($flagPriority) {
+                Write-PepLog ERROR "Unknown --priority '$flagPriority' (valid: High, Medium, Low)"
+                exit 1
+            }
+            $pepPriority = "Medium"
+        }
+    }
 
-    $pepAbstract = Read-Host "Brief abstract (2-3 sentences)"
+    # Abstract: --abstract or prompt
+    if ($null -ne $flagAbstract) {
+        $pepAbstract = $flagAbstract
+    } else {
+        $pepAbstract = Read-PepInput "Brief abstract (2-3 sentences)"
+    }
 
     $typeSlug = Get-TypeSlug $pepType
     $titleSlug = ($title.ToLower() -replace '[^a-z0-9]+', '-').Trim('-')
@@ -344,7 +438,9 @@ function New-Pep {
 
     Write-PepLog INFO "Created $pepId`: $filename"
 
-    if ($openCode) {
+    if ($noOpen) {
+        # --no-open: never launch an editor (scripted use)
+    } elseif ($openCode) {
         if (Get-Command code -ErrorAction SilentlyContinue) {
             Write-PepLog INFO "Opening in VS Code..."
             code $filename
@@ -352,13 +448,15 @@ function New-Pep {
             Write-PepLog WARN "VS Code not found"
             Write-PepLog INFO "Edit with: code $filename"
         }
-    } elseif ($script:AUTO_OPEN_EDITOR -eq "true" -and $script:DEFAULT_EDITOR -and (Get-Command $script:DEFAULT_EDITOR -ErrorAction SilentlyContinue)) {
+    } elseif ($script:AUTO_OPEN_EDITOR -eq "true" -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected -and $script:DEFAULT_EDITOR -and (Get-Command $script:DEFAULT_EDITOR -ErrorAction SilentlyContinue)) {
         Write-PepLog INFO "Opening in $($script:DEFAULT_EDITOR)..."
         & $script:DEFAULT_EDITOR $filename
     } else {
         $editor = if ($script:DEFAULT_EDITOR) { $script:DEFAULT_EDITOR } else { "notepad" }
         Write-PepLog INFO "Edit with: $editor $filename"
-        Write-PepLog INFO "Create branch when ready: .\tools\pep-tools.ps1 new-branch $pepNum"
+        if ($script:BRANCH_PER_PEP -ne "false") {
+            Write-PepLog INFO "Create branch when ready: .\tools\pep-tools.ps1 new-branch $pepNum"
+        }
     }
 }
 
@@ -368,7 +466,12 @@ function New-Pep {
 function New-PepBranch {
     param([string[]]$Arguments)
 
-    $pepRef = $Arguments[0]
+    $pepRef = $null
+    $stay = ($script:BRANCH_PER_PEP -eq "false")
+    foreach ($a in $Arguments) {
+        if ($a -eq "--here" -or $a -eq "--stay") { $stay = $true }
+        elseif (-not $pepRef) { $pepRef = $a }
+    }
     if (-not $pepRef) { $pepRef = Read-Host "Enter PEP number or ID (e.g. 3 or PEP-PE-MON-003)" }
 
     if ($pepRef -notmatch '(\d+)$') {
@@ -386,9 +489,23 @@ function New-PepBranch {
         exit 1
     }
 
-    if (-not (Get-Command git -ErrorAction SilentlyContinue) -or -not (Test-Path ".git")) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
         Write-PepLog ERROR "Not in a git repository"
         exit 1
+    }
+    git rev-parse --git-dir *>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-PepLog ERROR "Not in a git repository"
+        exit 1
+    }
+
+    # Stay mode: BRANCH_PER_PEP=false in .peprc, or --here for a one-off
+    if ($stay) {
+        $current = git rev-parse --abbrev-ref HEAD 2>$null
+        if (-not $current) { $current = "unknown" }
+        Write-PepLog INFO "Staying on branch: $current"
+        Write-PepLog INFO "Commit with: .\tools\pep-tools.ps1 commit $pepNum `"message`""
+        return
     }
 
     $branchName = "feature/" + [System.IO.Path]::GetFileNameWithoutExtension($pepFiles[0].Name)
@@ -426,7 +543,12 @@ function Invoke-PepCommit {
     }
     $pepNum = [int]$matches[1]
 
-    if (-not (Get-Command git -ErrorAction SilentlyContinue) -or -not (Test-Path ".git")) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-PepLog ERROR "Not in a git repository"
+        exit 1
+    }
+    git rev-parse --git-dir *>$null
+    if ($LASTEXITCODE -ne 0) {
         Write-PepLog ERROR "Not in a git repository"
         exit 1
     }
@@ -1668,8 +1790,12 @@ function Show-PepHelp {
     Write-Host "Usage: .\tools\pep-tools.ps1 <command> [arguments]" -ForegroundColor Green
     Write-Host ""
     Write-Host "PEP commands:" -ForegroundColor Green
-    Write-Host "  new-pep [number] [title]              Create a new PEP (prompts for type, priority, abstract)"
-    Write-Host "  new-branch [pep-num]                  Create git feature branch for a PEP"
+    Write-Host "  new-pep [flags] [number] [title]      Create a new PEP (prompts for type, priority, abstract)"
+    Write-Host "                                        Flags skip prompts: --type T, --priority P, --abstract TEXT"
+    Write-Host "                                        --no-open never launches an editor. The number defaults to"
+    Write-Host "                                        one more than the highest on any local/remote branch"
+    Write-Host "  new-branch [--here] [pep-num]         Create git feature branch for a PEP. --here, or"
+    Write-Host "                                        BRANCH_PER_PEP=false in .peprc, stays on the current branch"
     Write-Host "  commit <pep-num> [message]            Commit with correct PEP message format"
     if ($enableBlogs -eq "y") {
         Write-Host "  new-blog [blog-num] [pep-num]         Create implementation blog for a PEP"

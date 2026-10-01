@@ -192,7 +192,44 @@ get_next_pep_number() {
         done
     fi
 
+    # Also consider every local and remote branch (read-only), so two branches
+    # don't both raise the same number. Remote refs are as of the last fetch.
+    local ref_max
+    ref_max=$(get_max_pep_number_in_refs)
+    if [ "$ref_max" -gt "$max_num" ]; then
+        log "INFO" "Highest PEP number on other branches: $ref_max (last fetched state)" >&2
+        max_num="$ref_max"
+    fi
+
     echo $((max_num + 1))
+}
+
+# Highest PEP number for this repo's prefix across refs/heads and refs/remotes.
+# Read-only: git for-each-ref + git ls-tree, no fetch, no checkout. Identical
+# trees are listed once. Prints 0 outside a git repo or when nothing matches.
+get_max_pep_number_in_refs() {
+    local max=0 tree path num file_prefix
+    file_prefix=$(get_file_prefix)
+
+    git rev-parse --git-dir >/dev/null 2>&1 || { echo 0; return; }
+
+    while IFS= read -r tree; do
+        [ -n "$tree" ] || continue
+        while IFS= read -r path; do
+            path="${path##*/}"
+            if [[ "$path" =~ ^${file_prefix}([0-9]{3})- ]]; then
+                num=$((10#${BASH_REMATCH[1]}))
+                [ "$num" -gt "$max" ] && max="$num"
+            fi
+        done < <(git ls-tree --name-only "$tree" "${PEP_DIR}/" 2>/dev/null)
+    done < <(git for-each-ref --format='%(tree)' refs/heads refs/remotes 2>/dev/null | sort -u)
+
+    echo "$max"
+}
+
+# Escape a string for use as a sed replacement with | as the delimiter
+sed_escape() {
+    printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
 }
 
 # Get next available BLOG number
@@ -218,14 +255,30 @@ create_pep() {
     local pep_num=""
     local title=""
     local open_code=false
+    local no_open=false
+    local flag_type="" flag_priority="" flag_abstract="" have_abstract=false
 
     local args=()
-    for arg in "$@"; do
-        if [ "$arg" = "--code" ]; then
-            open_code=true
-        else
-            args+=("$arg")
-        fi
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --code)      open_code=true; shift ;;
+            --no-open)   no_open=true; shift ;;
+            --type|--priority|--abstract)
+                if [ $# -lt 2 ]; then
+                    log "ERROR" "$1 requires a value"
+                    exit 1
+                fi
+                case "$1" in
+                    --type)     flag_type="$2" ;;
+                    --priority) flag_priority="$2" ;;
+                    --abstract) flag_abstract="$2"; have_abstract=true ;;
+                esac
+                shift 2 ;;
+            --type=*)     flag_type="${1#*=}"; shift ;;
+            --priority=*) flag_priority="${1#*=}"; shift ;;
+            --abstract=*) flag_abstract="${1#*=}"; have_abstract=true; shift ;;
+            *)           args+=("$1"); shift ;;
+        esac
     done
 
     local argc=${#args[@]}
@@ -234,12 +287,12 @@ create_pep() {
         pep_num=$(get_next_pep_number)
         log "INFO" "Auto-assigned PEP number: $pep_num"
         echo -n "Enter PEP title: "
-        read -r title
+        read -r title || true
     elif [ $argc -eq 1 ]; then
         if [[ "${args[0]}" =~ ^[0-9]+$ ]]; then
             pep_num="${args[0]}"
             echo -n "Enter PEP title: "
-            read -r title
+            read -r title || true
         else
             title="${args[0]}"
             pep_num=$(get_next_pep_number)
@@ -251,12 +304,12 @@ create_pep() {
             title="${args[1]}"
         else
             log "ERROR" "When providing two arguments, first must be a number"
-            log "INFO" "Usage: $0 new-pep [--code] [number] [title]"
+            log "INFO" "Usage: $0 new-pep [--code] [--no-open] [--type T] [--priority P] [--abstract TEXT] [number] [title]"
             exit 1
         fi
     else
         log "ERROR" "Too many arguments"
-        log "INFO" "Usage: $0 new-pep [--code] [number] [title]"
+        log "INFO" "Usage: $0 new-pep [--code] [--no-open] [--type T] [--priority P] [--abstract TEXT] [number] [title]"
         exit 1
     fi
 
@@ -265,37 +318,69 @@ create_pep() {
         exit 1
     fi
 
-    # Prompt for type
+    # Type: --type (name or number) or prompt
     local pep_types=("Project" "Feature" "Process" "Infrastructure" "Documentation" "Bug" "Enhancement" "Research" "Security" "Performance")
-    echo ""
-    echo "Select PEP type:"
-    for i in "${!pep_types[@]}"; do
-        printf "  %2d) %s\n" "$((i+1))" "${pep_types[$i]}"
-    done
-    echo -n "Type [1-${#pep_types[@]}, default 2 (Feature)]: "
-    read -r type_choice
-    local pep_type
-    if [[ "$type_choice" =~ ^[0-9]+$ ]] && [ "$type_choice" -ge 1 ] && [ "$type_choice" -le "${#pep_types[@]}" ]; then
-        pep_type="${pep_types[$((type_choice-1))]}"
+    local pep_type=""
+    if [ -n "$flag_type" ]; then
+        if [[ "$flag_type" =~ ^[0-9]+$ ]] && [ "$flag_type" -ge 1 ] && [ "$flag_type" -le "${#pep_types[@]}" ]; then
+            pep_type="${pep_types[$((flag_type-1))]}"
+        else
+            local t
+            for t in "${pep_types[@]}"; do
+                if [ "$(echo "$t" | tr '[:upper:]' '[:lower:]')" = "$(echo "$flag_type" | tr '[:upper:]' '[:lower:]')" ]; then
+                    pep_type="$t"
+                fi
+            done
+        fi
+        if [ -z "$pep_type" ]; then
+            log "ERROR" "Unknown --type '$flag_type' (valid: ${pep_types[*]})"
+            exit 1
+        fi
     else
-        pep_type="Feature"
-        log "INFO" "Defaulting to type: $pep_type"
+        echo ""
+        echo "Select PEP type:"
+        for i in "${!pep_types[@]}"; do
+            printf "  %2d) %s\n" "$((i+1))" "${pep_types[$i]}"
+        done
+        echo -n "Type [1-${#pep_types[@]}, default 2 (Feature)]: "
+        read -r type_choice || true
+        if [[ "$type_choice" =~ ^[0-9]+$ ]] && [ "$type_choice" -ge 1 ] && [ "$type_choice" -le "${#pep_types[@]}" ]; then
+            pep_type="${pep_types[$((type_choice-1))]}"
+        else
+            pep_type="Feature"
+            log "INFO" "Defaulting to type: $pep_type"
+        fi
     fi
 
-    # Prompt for priority
-    echo -n "Priority [H)igh / M)edium / L)ow, default M]: "
-    read -r priority_choice
-    local pep_priority
+    # Priority: --priority or prompt
+    local pep_priority priority_choice
+    if [ -n "$flag_priority" ]; then
+        priority_choice="$flag_priority"
+    else
+        echo -n "Priority [H)igh / M)edium / L)ow, default M]: "
+        read -r priority_choice || true
+    fi
     priority_choice="$(echo "$priority_choice" | tr '[:upper:]' '[:lower:]')"
     case "$priority_choice" in
-        h|high) pep_priority="High" ;;
-        l|low)  pep_priority="Low" ;;
-        *)      pep_priority="Medium" ;;
+        h|high)        pep_priority="High" ;;
+        l|low)         pep_priority="Low" ;;
+        m|medium|"")   pep_priority="Medium" ;;
+        *)
+            if [ -n "$flag_priority" ]; then
+                log "ERROR" "Unknown --priority '$flag_priority' (valid: High, Medium, Low)"
+                exit 1
+            fi
+            pep_priority="Medium" ;;
     esac
 
-    # Prompt for abstract
-    echo -n "Brief abstract (2-3 sentences): "
-    read -r pep_abstract
+    # Abstract: --abstract or prompt
+    local pep_abstract
+    if [ "$have_abstract" = true ]; then
+        pep_abstract="$flag_abstract"
+    else
+        echo -n "Brief abstract (2-3 sentences): "
+        read -r pep_abstract || true
+    fi
 
     # Build filename: {prefix}{num}-{typeslug}-{titleslug}.md
     local type_slug
@@ -328,20 +413,22 @@ create_pep() {
     pep_id=$(get_pep_id "$pep_num")
 
     sed -i.bak "s|PEPID|$pep_id|g" "$filename"
-    sed -i.bak "s|\[Title\]|$title|g" "$filename"
+    sed -i.bak "s|\[Title\]|$(sed_escape "$title")|g" "$filename"
     sed -i.bak "s|YYYY-MM-DD|$today|g" "$filename"
-    sed -i.bak "s|\[Your Name\]|$author|g" "$filename"
+    sed -i.bak "s|\[Your Name\]|$(sed_escape "$author")|g" "$filename"
     sed -i.bak "s|\[Type\]|$pep_type|g" "$filename"
     sed -i.bak "s|\[Priority\]|$pep_priority|g" "$filename"
     if [ -n "$pep_abstract" ]; then
-        sed -i.bak "s|Brief summary of the enhancement (2-3 sentences).|$pep_abstract|" "$filename"
+        sed -i.bak "s|Brief summary of the enhancement (2-3 sentences).|$(sed_escape "$pep_abstract")|" "$filename"
     fi
 
     rm -f "$filename.bak"
 
     log "INFO" "Created $pep_id: $filename"
 
-    if [ "$open_code" = true ]; then
+    if [ "$no_open" = true ]; then
+        :  # --no-open: never launch an editor (scripted use)
+    elif [ "$open_code" = true ]; then
         if command -v code >/dev/null 2>&1; then
             log "INFO" "Opening in VS Code..."
             code "$filename"
@@ -349,18 +436,29 @@ create_pep() {
             log "WARN" "VS Code not found"
             log "INFO" "Edit with: code $filename"
         fi
-    elif [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && command -v "${DEFAULT_EDITOR:-vi}" >/dev/null 2>&1; then
+    elif [ "${AUTO_OPEN_EDITOR:-false}" = "true" ] && [ -t 0 ] && [ -t 1 ] && command -v "${DEFAULT_EDITOR:-vi}" >/dev/null 2>&1; then
         log "INFO" "Opening in ${DEFAULT_EDITOR:-vi}..."
         "${DEFAULT_EDITOR:-vi}" "$filename"
     else
         log "INFO" "Edit with: ${DEFAULT_EDITOR:-code} $filename"
-        log "INFO" "Create branch when ready: $0 new-branch $pep_num"
+        if [ "${BRANCH_PER_PEP:-true}" = "true" ]; then
+            log "INFO" "Create branch when ready: $0 new-branch $pep_num"
+        fi
     fi
 }
 
 # Create a git feature branch for a PEP
 new_branch() {
-    local pep_ref="${1:-}"
+    local pep_ref=""
+    local stay="false"
+    [ "${BRANCH_PER_PEP:-true}" = "true" ] || stay="true"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --here|--stay) stay="true"; shift ;;
+            *) [ -z "$pep_ref" ] && pep_ref="$1"; shift ;;
+        esac
+    done
 
     if [ -z "$pep_ref" ]; then
         echo -n "Enter PEP number or ID (e.g. 3 or PEP-PE-MON-003): "
@@ -386,9 +484,16 @@ new_branch() {
         exit 1
     fi
 
-    if ! command -v git >/dev/null 2>&1 || [ ! -d ".git" ]; then
+    if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
         log "ERROR" "Not in a git repository"
         exit 1
+    fi
+
+    # Stay mode: BRANCH_PER_PEP=false in .peprc, or --here for a one-off
+    if [ "$stay" = "true" ]; then
+        log "INFO" "Staying on branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
+        log "INFO" "Commit with: $0 commit $pep_num \"message\""
+        return 0
     fi
 
     # Branch name mirrors the filename: feature/pep-pe-mon-003-feat-slug
@@ -435,7 +540,7 @@ commit_pep() {
         exit 1
     fi
 
-    if ! command -v git >/dev/null 2>&1 || [ ! -d ".git" ]; then
+    if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
         log "ERROR" "Not in a git repository"
         exit 1
     fi
@@ -1790,8 +1895,12 @@ ${BLUE}PEP Management Tool v2.0${NC}
 ${GREEN}Usage:${NC} $0 <command> [arguments]
 
 ${GREEN}PEP commands:${NC}
-  ${YELLOW}new-pep${NC} [number] [title]                Create a new PEP (prompts for type, priority, abstract)
-  ${YELLOW}new-branch${NC} [pep-num]                   Create git feature branch for a PEP
+  ${YELLOW}new-pep${NC} [flags] [number] [title]        Create a new PEP (prompts for type, priority, abstract)
+                                               Flags skip prompts: --type T, --priority P, --abstract TEXT
+                                               --no-open never launches an editor. The number defaults to
+                                               one more than the highest on any local/remote branch
+  ${YELLOW}new-branch${NC} [--here] [pep-num]          Create git feature branch for a PEP. --here, or
+                                               BRANCH_PER_PEP=false in .peprc, stays on the current branch
   ${YELLOW}commit${NC} <pep-num> [message]              Commit with correct PEP message format
 $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [pep-num]         Create implementation blog for a PEP")
   ${YELLOW}list${NC}                                    List all PEPs with status

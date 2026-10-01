@@ -28,6 +28,11 @@ GRAFANA_URL=""
 # Set to true to require all commits reference a PEP (strict mode)
 REQUIRE_PEP_REFERENCE=false
 
+# Branching: "true" gives each PEP its own feature branch (new-branch creates it).
+# Set to "false" to stay on the current branch; new-branch then only validates
+# the PEP and prints the commit command.
+# BRANCH_PER_PEP="true"
+
 # Notification settings (optional)
 SLACK_WEBHOOK=""
 EMAIL_NOTIFICATIONS="false"

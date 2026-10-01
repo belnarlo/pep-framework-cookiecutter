@@ -202,6 +202,10 @@ Run both commands: a 2.0 `update-tools` only replaces `pep-tools.sh`. From
 2.1 on, `update-tools` also refreshes both hook copies. On Windows use
 `.\tools\pep-tools.ps1`. Details are in [CHANGELOG.md](CHANGELOG.md).
 
+Also new in 2.1 (bash and PowerShell): `new-pep` picks the next number across
+all branches and accepts `--type`, `--priority`, `--abstract` and `--no-open`;
+`new-branch --here` or `BRANCH_PER_PEP="false"` skips branch creation.
+
 Tests: `tests/test-commit-msg-hook.sh`.
 
 ### Projects that already have `update-tools` (v1.0+)
