@@ -21,6 +21,7 @@ RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
 YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'
+CYAN=$'\033[0;36m'
 NC=$'\033[0m' # No Color
 
 # Source configuration: project-level first, then personal overrides
@@ -811,6 +812,7 @@ list_peps() {
             "Active")      status_color="${BLUE}$status${NC}" ;;
             "Implemented") status_color="${GREEN}$status${NC}" ;;
             "Rejected")    status_color="${RED}$status${NC}" ;;
+            "Informational") status_color="${CYAN}$status${NC}" ;;
             *)             status_color="$status" ;;
         esac
 
@@ -845,7 +847,10 @@ show_status() {
         return
     fi
 
-    local known_statuses=("Draft" "Active" "Implemented" "Rejected" "Superseded")
+    # Informational is a standing status (reference/guidance PEPs with no
+    # implementation to finish) — neither open work nor closed. It is last so the
+    # counts[] indexes used for the Open/Closed totals below stay valid.
+    local known_statuses=("Draft" "Active" "Implemented" "Rejected" "Superseded" "Informational")
 
     local example_id
     example_id=$(get_pep_id 1)
@@ -866,12 +871,13 @@ show_status() {
 
     printf "%-30s: %d\n" "Open (Draft + Active)" "$open_count"
     for i in "${!known_statuses[@]}"; do
-        printf "%-12s: %d\n" "${known_statuses[$i]}" "${counts[$i]}"
+        printf "%-14s: %d\n" "${known_statuses[$i]}" "${counts[$i]}"
     done
     printf "%-30s: %d\n" "Closed (Implemented + Rejected + Superseded)" "$closed_count"
+    printf "%-30s: %d\n" "Standing (Informational)" "${counts[5]}"
 
     echo "-------------"
-    printf "%-12s: %d\n" "Total" "$total"
+    printf "%-14s: %d\n" "Total" "$total"
 
     # Flag PEPs whose status doesn't match one of the known values (typos, blank, etc.)
     local unexpected=()

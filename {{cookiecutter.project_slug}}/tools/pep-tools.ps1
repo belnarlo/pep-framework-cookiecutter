@@ -761,6 +761,7 @@ function Show-PepList {
             "Active"      { $color = "Blue" }
             "Implemented" { $color = "Green" }
             "Rejected"    { $color = "Red" }
+            "Informational" { $color = "Cyan" }
         }
 
         Write-Host ("{0} [{1}]: {2,-40} (" -f $pepId, $type, $title) -NoNewline
@@ -798,7 +799,9 @@ function Show-PepStatus {
         return
     }
 
-    $knownStatuses = @("Draft", "Active", "Implemented", "Rejected", "Superseded")
+    # Informational is a standing status — neither open work nor closed, so it is
+    # not treated as terminal below.
+    $knownStatuses = @("Draft", "Active", "Implemented", "Rejected", "Superseded", "Informational")
     $exampleId = Get-PepId 1
     $idFormat = $exampleId -replace '001$', ''
 
@@ -821,11 +824,11 @@ function Show-PepStatus {
     $total = 0
     foreach ($status in $knownStatuses) {
         $count = @($files | Where-Object { $meta[$_.FullName].Status -eq $status }).Count
-        Write-Host ("{0,-12}: {1}" -f $status, $count)
+        Write-Host ("{0,-14}: {1}" -f $status, $count)
         $total += $count
     }
     Write-Host "-------------"
-    Write-Host ("{0,-12}: {1}" -f "Total", $total)
+    Write-Host ("{0,-14}: {1}" -f "Total", $total)
 
     # Flag PEPs whose status doesn't match one of the known values
     $unexpected = @($files | Where-Object { $knownStatuses -notcontains $meta[$_.FullName].Status })

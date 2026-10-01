@@ -29,7 +29,7 @@ exist.
    - **Supersedes / Superseded-By** — if set to anything other than the "(if applicable)"
      placeholder, verify that PEP ID actually exists under `docs/peps/`
    - **References → Related PEPs** — verify referenced IDs actually exist
-   - **Status** — one of Draft / Active / Implemented / Rejected / Superseded
+   - **Status** — one of Draft / Active / Implemented / Rejected / Superseded / Informational
 
 4. **Report as a short checklist** — ✅ for what's solid, ⚠️ for what needs work, one line of
    reasoning each. This is a review, not a rewrite: don't paste in replacement prose unprompted.
