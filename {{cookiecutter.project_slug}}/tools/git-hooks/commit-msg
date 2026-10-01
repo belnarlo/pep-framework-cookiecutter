@@ -15,6 +15,15 @@ REPO_CODE=""
 if [ -f ".peprc" ]; then source ".peprc"; fi
 if [ -f ".peprc.local" ]; then source ".peprc.local"; fi
 
+# Never validate merge commits. Git's default merge message names the branch
+# (e.g. "Merge branch 'main' into feature/pep-ps-slt-059-x"), which would
+# otherwise look like a malformed PEP reference. MERGE_HEAD also covers a merge
+# completed with a custom message or with `git commit` after resolving conflicts.
+merge_head=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null || true)
+if [[ "$commit_msg" == "Merge "* ]] || { [ -n "$merge_head" ] && [ -f "$merge_head" ]; }; then
+    exit 0
+fi
+
 # Build the commit prefix — mirrors get_file_prefix() in pep-tools.sh
 # e.g. "pep-pe-mon-"  or  "pep-"
 if [ -n "${PROJECT_CODE:-}" ] && [ -n "${REPO_CODE:-}" ]; then

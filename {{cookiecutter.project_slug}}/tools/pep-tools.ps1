@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 PEP Management Tools (PowerShell edition)
-Version: 2.0
+Version: 2.1
 Command-line tools for managing Project Enhancement Packages on Windows.
 Mirrors tools/pep-tools.sh — same commands, same file/ID formats, same .peprc config.
 #>
@@ -1437,8 +1437,10 @@ function Update-PepTools {
                 exit 1
             }
             Copy-Item $srcFile $dest -Force
+            [void](Sync-PepHookFromDir (Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools"))
         } elseif ($source -match '^https?://') {
             Invoke-WebRequest -Uri $source -OutFile $dest
+            Write-PepLog WARN "Raw-file source: the commit-msg hook was NOT refreshed — run '.\tools\pep-tools.ps1 update-hooks' too"
         } else {
             $srcFile = $source
             if (Test-Path $source -PathType Container) { $srcFile = Join-Path $source "pep-tools.ps1" }
@@ -1448,6 +1450,7 @@ function Update-PepTools {
                 exit 1
             }
             Copy-Item $srcFile $dest -Force
+            [void](Sync-PepHookFromDir (Split-Path -Parent $srcFile))
         }
     } catch {
         Write-PepLog ERROR "Update failed: $_"
@@ -1561,7 +1564,6 @@ function Update-PepTemplates {
 # Setup git hooks
 # ----------------------------------------------------------------------------
 function Install-PepGitHooks {
-    $hookFile = ".git/hooks/commit-msg"
     $sourceHook = "tools/git-hooks/commit-msg"
 
     if (-not (Test-Path $sourceHook)) {
@@ -1569,12 +1571,86 @@ function Install-PepGitHooks {
         return
     }
 
-    if (Test-Path ".git") {
+    # Ask git for the hook path so worktrees and core.hooksPath are honoured
+    $hookFile = $null
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        $hookFile = git rev-parse --git-path hooks/commit-msg 2>$null
+        if ($LASTEXITCODE -ne 0) { $hookFile = $null }
+    }
+
+    if ($hookFile) {
+        $hookDir = Split-Path -Parent $hookFile
+        if ($hookDir -and -not (Test-Path $hookDir)) { New-Item -ItemType Directory -Path $hookDir -Force | Out-Null }
         Copy-Item $sourceHook $hookFile -Force
-        Write-PepLog INFO "Installed git commit-msg hook"
+        Write-PepLog INFO "Installed git commit-msg hook: $hookFile"
     } else {
         Write-PepLog WARN "Not in a git repository, skipping hook installation"
     }
+}
+
+# Refresh tools/git-hooks/commit-msg from a framework tools directory (the one
+# holding pep-tools.ps1 and git-hooks/), then reinstall it into the repo's
+# hooks dir. Returns $false if the source has no hook.
+function Sync-PepHookFromDir {
+    param([string]$ToolsDir)
+
+    $srcHook = Join-Path $ToolsDir "git-hooks/commit-msg"
+    $destHook = "tools/git-hooks/commit-msg"
+
+    if (-not (Test-Path $srcHook)) {
+        Write-PepLog WARN "Git hook not found in source: $srcHook"
+        return $false
+    }
+
+    $destDir = Split-Path -Parent $destHook
+    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+    if ((Test-Path $destHook) -and ((Get-FileHash $srcHook).Hash -eq (Get-FileHash $destHook).Hash)) {
+        Write-PepLog INFO "Hook source already current: $destHook"
+    } else {
+        Copy-Item $srcHook $destHook -Force
+        Write-PepLog INFO "Updated $destHook"
+    }
+    Install-PepGitHooks
+    return $true
+}
+
+# Refresh the hook from the update source and reinstall it into .git/hooks
+function Update-PepHooks {
+    param([string[]]$Arguments)
+
+    $source = $null
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        switch ($Arguments[$i]) {
+            "--source" { $source = $Arguments[$i + 1]; $i++ }
+            default    { Write-PepLog ERROR "Unknown option: $($Arguments[$i])"; exit 1 }
+        }
+    }
+
+    if (-not $source -and $script:PEP_FRAMEWORK_SOURCE) { $source = $script:PEP_FRAMEWORK_SOURCE }
+    if (-not $source) {
+        $source = $script:DEFAULT_TEMPLATE_REPO
+        Write-PepLog INFO "No source specified — defaulting to $source"
+    }
+
+    $ok = $false
+    try {
+        if (Test-GitSource $source) {
+            Invoke-GitClone $source
+            $ok = Sync-PepHookFromDir (Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools")
+        } elseif ($source -match '^https?://') {
+            $derived = Get-GitUrlFromRawUrl $source
+            if (-not $derived) { $derived = $script:DEFAULT_TEMPLATE_REPO }
+            Invoke-GitClone $derived
+            $ok = Sync-PepHookFromDir (Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools")
+        } else {
+            $srcDir = $source
+            if (Test-Path $source -PathType Leaf) { $srcDir = Split-Path -Parent $source }
+            $ok = Sync-PepHookFromDir $srcDir
+        }
+    } finally {
+        Remove-GitCloneTmpDir
+    }
+    if (-not $ok) { exit 1 }
 }
 
 # ----------------------------------------------------------------------------
@@ -1619,6 +1695,8 @@ function Show-PepHelp {
     Write-Host "  update-tools [--source <path|git|url>] Update pep-tools.ps1 from source (defaults to the"
     Write-Host "                                          framework's git repo if none is configured)"
     Write-Host "  update-templates [--source <path|git>] Update PEP/BLOG templates from source (same default)"
+    Write-Host "  update-hooks [--source <path|git>]     Refresh tools/git-hooks/commit-msg from source AND"
+    Write-Host "                                         reinstall it into .git/hooks (update-tools does this too)"
     Write-Host "  help                                    Show this help message"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Green
@@ -1679,6 +1757,7 @@ switch ($Command) {
     "claude-skills"    { Invoke-PepClaudeSkills -Arguments $Rest }
     "update-tools"     { Update-PepTools -Arguments $Rest }
     "update-templates" { Update-PepTemplates -Arguments $Rest }
+    "update-hooks"     { Update-PepHooks -Arguments $Rest }
     "help"             { Show-PepHelp }
     "-h"               { Show-PepHelp }
     "--help"           { Show-PepHelp }

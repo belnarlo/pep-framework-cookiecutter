@@ -1,6 +1,6 @@
 #!/bin/bash
 # PEP Management Tools
-# Version: 2.0
+# Version: 2.1
 # Description: Command-line tools for managing Project Enhancement Packages
 
 set -e
@@ -1563,6 +1563,7 @@ update_tools() {
             cp "$backup" "$dest"; exit 1
         fi
         cp "$src_file" "$dest"
+        sync_hook_from_dir "${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools" || true
     elif echo "$source" | grep -qE '^https?://'; then
         if command -v curl >/dev/null 2>&1; then
             curl -fsSL "$source" -o "$dest"
@@ -1572,6 +1573,7 @@ update_tools() {
             log "ERROR" "Neither curl nor wget found"
             cp "$backup" "$dest"; exit 1
         fi
+        log "WARN" "Raw-file source: the commit-msg hook was NOT refreshed — run '$0 update-hooks' too"
     else
         local src_file="$source"
         [ -d "$source" ] && src_file="$source/pep-tools.sh"
@@ -1580,6 +1582,7 @@ update_tools() {
             cp "$backup" "$dest"; exit 1
         fi
         cp "$src_file" "$dest"
+        sync_hook_from_dir "$(dirname "$src_file")" || true
     fi
 
     chmod +x "$dest"
@@ -1690,22 +1693,85 @@ update_templates() {
     fi
 }
 
-# Setup git hooks
+# Setup git hooks — copy tools/git-hooks/commit-msg into the repo's hooks dir.
+# Uses git's own path lookup so worktrees and core.hooksPath are honoured.
 setup_git_hooks() {
-    local hook_file=".git/hooks/commit-msg"
     local source_hook="tools/git-hooks/commit-msg"
+    local hook_file
 
     if [ ! -f "$source_hook" ]; then
         log "WARN" "Git hook source not found: $source_hook"
         return
     fi
 
-    if [ -d ".git" ]; then
+    if hook_file=$(git rev-parse --git-path hooks/commit-msg 2>/dev/null); then
+        mkdir -p "$(dirname "$hook_file")"
         cp "$source_hook" "$hook_file"
         chmod +x "$hook_file"
-        log "INFO" "Installed git commit-msg hook"
+        log "INFO" "Installed git commit-msg hook: $hook_file"
     else
         log "WARN" "Not in a git repository, skipping hook installation"
+    fi
+}
+
+# Refresh tools/git-hooks/commit-msg from a framework tools directory (the one
+# holding pep-tools.sh and git-hooks/), then reinstall it into the repo's hooks
+# dir. $1 = tools dir.
+sync_hook_from_dir() {
+    local tools_dir="$1"
+    local src_hook="${tools_dir}/git-hooks/commit-msg"
+    local dest_hook="tools/git-hooks/commit-msg"
+
+    if [ ! -f "$src_hook" ]; then
+        log "WARN" "Git hook not found in source: $src_hook"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$dest_hook")"
+    if [ -f "$dest_hook" ] && cmp -s "$src_hook" "$dest_hook"; then
+        log "INFO" "Hook source already current: $dest_hook"
+    else
+        cp "$src_hook" "$dest_hook"
+        log "INFO" "Updated $dest_hook"
+    fi
+    chmod +x "$dest_hook"
+    setup_git_hooks
+}
+
+# Resolve the update source (flag, PEP_FRAMEWORK_SOURCE, or default repo) and
+# refresh the hook from it. Used by `update-hooks`; update-tools reuses
+# sync_hook_from_dir directly because it has already fetched the source.
+update_hooks() {
+    local source=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --source) source="$2"; shift 2 ;;
+            *) log "ERROR" "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$source" ] && [ -n "${PEP_FRAMEWORK_SOURCE:-}" ]; then
+        source="$PEP_FRAMEWORK_SOURCE"
+    fi
+    if [ -z "$source" ]; then
+        source="$DEFAULT_TEMPLATE_REPO"
+        log "INFO" "No source specified — defaulting to $source"
+    fi
+
+    if is_git_source "$source"; then
+        clone_git_source "$source"
+        sync_hook_from_dir "${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools" || exit 1
+    elif echo "$source" | grep -qE '^https?://'; then
+        local derived
+        derived=$(derive_git_url_from_raw "$source")
+        [ -n "$derived" ] || derived="$DEFAULT_TEMPLATE_REPO"
+        clone_git_source "$derived"
+        sync_hook_from_dir "${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools" || exit 1
+    else
+        local src_dir="$source"
+        [ -f "$source" ] && src_dir="$(dirname "$source")"
+        sync_hook_from_dir "$src_dir" || exit 1
     fi
 }
 
@@ -1754,6 +1820,8 @@ ${GREEN}Framework commands:${NC}
   ${YELLOW}update-tools${NC} [--source <path|git|url>]  Update pep-tools.sh from source (defaults to the
                                                framework's git repo if none is configured)
   ${YELLOW}update-templates${NC} [--source <path|git>]  Update PEP/BLOG templates from source (same default)
+  ${YELLOW}update-hooks${NC} [--source <path|git>]      Refresh tools/git-hooks/commit-msg from source AND
+                                               reinstall it into .git/hooks (update-tools does this too)
   ${YELLOW}help${NC}                                    Show this help message
 
 ${GREEN}Examples:${NC}
@@ -1856,6 +1924,10 @@ main() {
         "update-templates")
             shift
             update_templates "$@"
+            ;;
+        "update-hooks")
+            shift
+            update_hooks "$@"
             ;;
         "help"|"-h"|"--help")
             show_help

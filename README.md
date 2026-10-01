@@ -153,6 +153,7 @@ your-new-project/
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
 ./tools/pep-tools.sh update-tools                 # Update pep-tools.sh (defaults to this repo's git URL)
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default)
+./tools/pep-tools.sh update-hooks                 # Refresh the commit-msg hook and reinstall it
 ./tools/pep-tools.sh help                         # Full help with current repo's ID format
 ```
 
@@ -183,6 +184,26 @@ cp -r ../temp/{docs,tools,.peprc,.peprc.local.example,.gitignore} .
 
 ## Upgrading an Existing PEP Framework Installation
 
+### Hook fix for merge commits (2.1)
+
+Before 2.1 the `commit-msg` hook refused git's default merge message on PEP
+branches, so `git pull` and `git merge` failed with a half-finished merge. The
+fix is in the hook, which lives in two places in each repo:
+`tools/git-hooks/commit-msg` (tracked) and `.git/hooks/commit-msg` (the
+installed copy git runs). Both must be refreshed. In each repo run:
+
+```bash
+./tools/pep-tools.sh update-tools
+./tools/pep-tools.sh update-hooks
+git add tools && git commit -m "chore: update PEP tools to 2.1"
+```
+
+Run both commands: a 2.0 `update-tools` only replaces `pep-tools.sh`. From
+2.1 on, `update-tools` also refreshes both hook copies. On Windows use
+`.\tools\pep-tools.ps1`. Details are in [CHANGELOG.md](CHANGELOG.md).
+
+Tests: `tests/test-commit-msg-hook.sh`.
+
 ### Projects that already have `update-tools` (v1.0+)
 
 ```bash
@@ -195,8 +216,8 @@ cp -r ../temp/{docs,tools,.peprc,.peprc.local.example,.gitignore} .
 ./tools/pep-tools.sh update-tools --source /path/to/pep-framework-cookiecutter/\{\{cookiecutter.project_slug\}\}/tools
 ./tools/pep-tools.sh update-tools --source git@github.com:your-org/your-fork.git
 
-# Re-install the git hook to pick up the new commit format
-./tools/pep-tools.sh init
+# Refresh the git hook (tools/ copy and .git/hooks copy)
+./tools/pep-tools.sh update-hooks
 
 # Want Claude Code skills too? update-tools/update-templates alone won't add them
 # (see "Claude AI Integration" below) — install explicitly:
