@@ -635,9 +635,9 @@ migrate_peps() {
 
         # Read PEP metadata from content
         local title
-        title=$(grep "^\*\*Title:\*\*" "$pep" | sed 's/\*\*Title:\*\* //' | head -1)
+        title=$(get_pep_field "$pep" "Title")
         local pep_type
-        pep_type=$(grep "^\*\*Type:\*\*" "$pep" | sed 's/\*\*Type:\*\* //' | head -1)
+        pep_type=$(get_pep_field "$pep" "Type")
 
         log "INFO" "Migrating: $basename_pep"
         [ -n "$title" ] && echo "  Title: $title"
