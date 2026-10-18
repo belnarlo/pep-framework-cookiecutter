@@ -1660,23 +1660,31 @@ update_tools() {
     cp "$dest" "$backup"
     log "INFO" "Backed up current tools to $backup"
 
+    # Put the old script back and drop the backup, so a failed update leaves
+    # the repo exactly as it was (no stray .bak).
+    restore_tools() {
+        cp "$backup" "$dest"
+        rm -f "$backup"
+        log "INFO" "Restored $dest from backup; nothing changed"
+    }
+
     if is_git_source "$source"; then
         clone_git_source "$source"
         local src_file="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools/pep-tools.sh"
         if [ ! -f "$src_file" ]; then
             log "ERROR" "Source file not found: $src_file"
-            cp "$backup" "$dest"; exit 1
+            restore_tools; exit 1
         fi
         cp "$src_file" "$dest"
         sync_hook_from_dir "${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools" || true
     elif echo "$source" | grep -qE '^https?://'; then
         if command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$source" -o "$dest"
+            curl -fsSL "$source" -o "$dest" || { log "ERROR" "Download failed: $source"; restore_tools; exit 1; }
         elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$dest" "$source"
+            wget -qO "$dest" "$source" || { log "ERROR" "Download failed: $source"; restore_tools; exit 1; }
         else
             log "ERROR" "Neither curl nor wget found"
-            cp "$backup" "$dest"; exit 1
+            restore_tools; exit 1
         fi
         log "WARN" "Raw-file source: the commit-msg hook was NOT refreshed — run '$0 update-hooks' too"
     else
@@ -1684,14 +1692,21 @@ update_tools() {
         [ -d "$source" ] && src_file="$source/pep-tools.sh"
         if [ ! -f "$src_file" ]; then
             log "ERROR" "Source file not found: $src_file"
-            cp "$backup" "$dest"; exit 1
+            restore_tools; exit 1
         fi
         cp "$src_file" "$dest"
         sync_hook_from_dir "$(dirname "$src_file")" || true
     fi
 
+    # Only keep the new script if it parses; otherwise roll back.
+    if [ ! -s "$dest" ] || ! bash -n "$dest" 2>/dev/null; then
+        log "ERROR" "The new $dest is empty or doesn't parse"
+        restore_tools; exit 1
+    fi
+
     chmod +x "$dest"
-    log "INFO" "Updated $dest from $source"
+    rm -f "$backup"
+    log "INFO" "Updated $dest from $source (backup removed)"
 
     local local_config="${CONFIG_FILE}.local"
     if $save_source || [ -z "${PEP_FRAMEWORK_SOURCE:-}" ]; then

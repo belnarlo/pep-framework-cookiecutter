@@ -216,6 +216,19 @@ cp tools/git-hooks/commit-msg .git/hooks/commit-msg
 pep update-tools --source "$SRC_TOOLS" >/dev/null 2>&1
 expect_success "[$CLI] update-tools refreshes both hook copies" \
     bash -c 'cmp -s "$1" tools/git-hooks/commit-msg && cmp -s "$1" .git/hooks/commit-msg' _ "$SRC_TOOLS/git-hooks/commit-msg"
+expect_success "[$CLI] update-tools removes its backup after a good update" \
+    bash -c '! ls tools/*.bak >/dev/null 2>&1'
+
+# A source that doesn't parse is rolled back, with no backup left behind
+BROKEN="$WORK/broken-$CLI"
+mkdir -p "$BROKEN"
+printf 'if then fi (\n' > "$BROKEN/pep-tools.sh"
+printf 'function { (\n' > "$BROKEN/pep-tools.ps1"
+cp tools/pep-tools.sh "$WORK/before-$CLI.sh"; cp tools/pep-tools.ps1 "$WORK/before-$CLI.ps1"
+expect_failure "[$CLI] update-tools refuses a source that doesn't parse" \
+    pep update-tools --source "$BROKEN"
+expect_success "[$CLI] ...and leaves the old script in place, with no backup" \
+    bash -c 'cmp -s "$1" tools/pep-tools.sh && cmp -s "$2" tools/pep-tools.ps1 && ! ls tools/*.bak >/dev/null 2>&1' _ "$WORK/before-$CLI.sh" "$WORK/before-$CLI.ps1"
 
 # update-templates keeps the repo's ai-block choice (or a customised template)
 echo "# --- update-templates via $CLI"

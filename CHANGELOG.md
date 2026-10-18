@@ -31,6 +31,12 @@
 
   Run `update-tools` before `update-templates`, so the new logic is the one
   doing the update.
+- `update-tools` removes its `tools/pep-tools.sh.bak` (or `.ps1.bak`) once the
+  update succeeds. It first checks the new script parses (`bash -n`, or the
+  PowerShell parser). If it doesn't, or the copy or download fails, the old
+  script is restored and the backup removed, so a failed update changes
+  nothing. A failed `curl`/`wget` download used to stop the script under
+  `set -e` without restoring, which could leave a broken `pep-tools.sh`.
 - `pep-template-ai.md` lost a stray trailing space, so repos whose pre-commit
   trims whitespace no longer see a diff on every `update-templates`.
 - Monitoring projects' generated README no longer suggests

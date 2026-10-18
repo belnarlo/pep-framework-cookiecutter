@@ -1549,13 +1549,21 @@ function Update-PepTools {
     Copy-Item $dest $backup -Force
     Write-PepLog INFO "Backed up current tools to $backup"
 
+    # Put the old script back and drop the backup, so a failed update leaves
+    # the repo exactly as it was (no stray .bak).
+    $restoreTools = {
+        Copy-Item $backup $dest -Force
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+        Write-PepLog INFO "Restored $dest from backup; nothing changed"
+    }
+
     try {
         if (Test-GitSource $source) {
             Invoke-GitClone $source
             $srcFile = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools/pep-tools.ps1"
             if (-not (Test-Path $srcFile)) {
                 Write-PepLog ERROR "Source file not found: $srcFile"
-                Copy-Item $backup $dest -Force
+                & $restoreTools
                 exit 1
             }
             Copy-Item $srcFile $dest -Force
@@ -1568,7 +1576,7 @@ function Update-PepTools {
             if (Test-Path $source -PathType Container) { $srcFile = Join-Path $source "pep-tools.ps1" }
             if (-not (Test-Path $srcFile)) {
                 Write-PepLog ERROR "Source file not found: $srcFile"
-                Copy-Item $backup $dest -Force
+                & $restoreTools
                 exit 1
             }
             Copy-Item $srcFile $dest -Force
@@ -1576,13 +1584,23 @@ function Update-PepTools {
         }
     } catch {
         Write-PepLog ERROR "Update failed: $_"
-        Copy-Item $backup $dest -Force
+        & $restoreTools
         exit 1
     } finally {
         Remove-GitCloneTmpDir
     }
 
-    Write-PepLog INFO "Updated $dest from $source"
+    # Only keep the new script if it parses; otherwise roll back.
+    $parseErrors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $dest).Path, [ref]$null, [ref]$parseErrors)
+    if ((Get-Item $dest).Length -eq 0 -or $parseErrors.Count -gt 0) {
+        Write-PepLog ERROR "The new $dest is empty or doesn't parse"
+        & $restoreTools
+        exit 1
+    }
+
+    Remove-Item $backup -Force -ErrorAction SilentlyContinue
+    Write-PepLog INFO "Updated $dest from $source (backup removed)"
 
     $localConfig = "$($script:CONFIG_FILE).local"
     if ($saveSource -or -not $script:PEP_FRAMEWORK_SOURCE) {
