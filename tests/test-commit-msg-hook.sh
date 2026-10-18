@@ -216,6 +216,35 @@ cp tools/git-hooks/commit-msg .git/hooks/commit-msg
 pep update-tools --source "$SRC_TOOLS" >/dev/null 2>&1
 expect_success "[$CLI] update-tools refreshes both hook copies" \
     bash -c 'cmp -s "$1" tools/git-hooks/commit-msg && cmp -s "$1" .git/hooks/commit-msg' _ "$SRC_TOOLS/git-hooks/commit-msg"
+
+# update-templates keeps the repo's ai-block choice (or a customised template)
+echo "# --- update-templates via $CLI"
+new_repo "$WORK/templates-$CLI"
+cp "${TOOLS_DIR}/pep-tools.sh" "${TOOLS_DIR}/pep-tools.ps1" tools/
+mkdir -p docs/templates
+T=docs/templates
+SRC_T="${TOOLS_ROOT}/docs/templates"
+old_variants() { printf 'old ai\n' > $T/pep-template-ai.md; printf 'old no-ai\n' > $T/pep-template-no-ai.md; }
+
+old_variants; cp $T/pep-template-ai.md $T/pep-template.md
+pep update-templates --source "${TOOLS_DIR}/pep-tools.sh" >/dev/null 2>&1
+expect_success "[$CLI] update-templates keeps AI block on" \
+    cmp -s $T/pep-template.md "$SRC_T/pep-template-ai.md"
+
+old_variants; cp $T/pep-template-no-ai.md $T/pep-template.md
+pep update-templates --source "${TOOLS_DIR}/pep-tools.sh" >/dev/null 2>&1
+expect_success "[$CLI] update-templates keeps AI block off" \
+    cmp -s $T/pep-template.md "$SRC_T/pep-template-no-ai.md"
+
+old_variants; printf 'my own template\n' > $T/pep-template.md
+pep update-templates --source "${TOOLS_DIR}/pep-tools.sh" >/dev/null 2>&1
+expect_success "[$CLI] update-templates keeps a customised template, still updates the variants" \
+    bash -c 'grep -qx "my own template" "$1/pep-template.md" && cmp -s "$1/pep-template-ai.md" "$2/pep-template-ai.md"' _ "$T" "$SRC_T"
+
+rm -f $T/*.md; printf 'old\n' > $T/pep-template.md
+pep update-templates --source "${TOOLS_DIR}/pep-tools.sh" >/dev/null 2>&1
+expect_success "[$CLI] update-templates without local variants installs the default template" \
+    cmp -s $T/pep-template.md "$SRC_T/pep-template.md"
 }
 
 cli_tests sh

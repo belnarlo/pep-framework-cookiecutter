@@ -17,7 +17,20 @@
   done
   ```
 
-  Then `./tools/pep-tools.sh update-templates` to pick up the fixed templates.
+  Then `./tools/pep-tools.sh update-tools` and
+  `./tools/pep-tools.sh update-templates` to pick up the fixed templates.
+- `update-templates` keeps the repo's AI-block choice (both `pep-tools.sh` and
+  `pep-tools.ps1`). It used to copy the default `pep-template.md` over the
+  active template, silently turning the AI block off in repos that had it on.
+  It now checks the active template first, the same way as `ai-block status`:
+  - **on** or **off:** the active template is refreshed from the matching new
+    variant.
+  - **customised** (matches neither variant): left alone, with a warning. The
+    variants are still updated, so you can merge by hand.
+  - **no local variants** (very old installs): the default template, as before.
+
+  Run `update-tools` before `update-templates`, so the new logic is the one
+  doing the update.
 - Monitoring projects' generated README no longer suggests
   `grafana-cli admin export-dashboard`, which doesn't exist (and `grafana-cli` is
   deprecated in favour of `grafana cli`). It now shows an HTTP API export.

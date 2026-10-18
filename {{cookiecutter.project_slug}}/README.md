@@ -214,7 +214,7 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 ./tools/pep-tools.sh ai-block <on|off|status>     # Switch the PEP template's AI block on/off
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
 ./tools/pep-tools.sh update-tools                 # Update pep-tools.sh (defaults to the framework's git repo)
-./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default)
+./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default; keeps the AI-block choice)
 ./tools/pep-tools.sh update-hooks                 # Refresh the commit-msg hook and reinstall it
 ./tools/pep-tools.sh help                         # Full help
 ```

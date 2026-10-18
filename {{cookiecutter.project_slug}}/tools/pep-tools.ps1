@@ -1646,8 +1646,36 @@ function Update-PepTemplates {
 
         Confirm-Directories
 
+        # Remember which variant the active template is before overwriting
+        # anything, so the repo's ai-block choice (or a customised template)
+        # survives the update. Same test as "ai-block status".
+        $active = Join-Path $script:TEMPLATE_DIR "pep-template.md"
+        $aiLocal = Join-Path $script:TEMPLATE_DIR "pep-template-ai.md"
+        $noAiLocal = Join-Path $script:TEMPLATE_DIR "pep-template-no-ai.md"
+        $aiMode = "default"
+        if (Test-Path $active) {
+            $activeRaw = Get-Content $active -Raw
+            if ((Test-Path $aiLocal) -and ($activeRaw -eq (Get-Content $aiLocal -Raw))) { $aiMode = "on" }
+            elseif ((Test-Path $noAiLocal) -and ($activeRaw -eq (Get-Content $noAiLocal -Raw))) { $aiMode = "off" }
+            elseif ((Test-Path $aiLocal) -or (Test-Path $noAiLocal)) { $aiMode = "custom" }
+        }
+
         $updated = 0
-        foreach ($template in @("pep-template.md", "pep-template-ai.md", "pep-template-no-ai.md", "blog-template.md")) {
+        foreach ($template in @("pep-template-ai.md", "pep-template-no-ai.md", "pep-template.md", "blog-template.md")) {
+            if ($template -eq "pep-template.md" -and $aiMode -ne "default") {
+                if ($aiMode -in @("on", "off")) {
+                    $variant = if ($aiMode -eq "on") { $aiLocal } else { $noAiLocal }
+                    if (Test-Path $variant) {
+                        Copy-Item $variant $active -Force
+                        Write-PepLog INFO "Updated $active (kept AI block: $aiMode)"
+                        $updated++
+                    }
+                } else {
+                    Write-PepLog WARN "Kept $active`: it's been customised and matches neither variant"
+                    Write-PepLog INFO "Compare it with $noAiLocal (or -ai.md) and merge by hand"
+                }
+                continue
+            }
             $src = Join-Path $templateSrc $template
             if (Test-Path $src) {
                 Copy-Item $src (Join-Path $script:TEMPLATE_DIR $template) -Force

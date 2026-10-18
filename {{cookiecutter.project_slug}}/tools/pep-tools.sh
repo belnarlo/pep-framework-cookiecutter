@@ -1763,8 +1763,41 @@ update_templates() {
 
     ensure_directories
 
+    # Remember which variant the active template is before overwriting
+    # anything, so the repo's ai-block choice (or a customised template)
+    # survives the update. Same test as "ai-block status".
+    local active="${TEMPLATE_DIR}/pep-template.md"
+    local ai_mode="default"
+    if [ -f "$active" ]; then
+        if [ -f "${TEMPLATE_DIR}/pep-template-ai.md" ] && diff -q "$active" "${TEMPLATE_DIR}/pep-template-ai.md" >/dev/null 2>&1; then
+            ai_mode="on"
+        elif [ -f "${TEMPLATE_DIR}/pep-template-no-ai.md" ] && diff -q "$active" "${TEMPLATE_DIR}/pep-template-no-ai.md" >/dev/null 2>&1; then
+            ai_mode="off"
+        elif [ -f "${TEMPLATE_DIR}/pep-template-ai.md" ] || [ -f "${TEMPLATE_DIR}/pep-template-no-ai.md" ]; then
+            ai_mode="custom"
+        fi
+    fi
+
     local updated=0
-    for template in pep-template.md pep-template-ai.md pep-template-no-ai.md blog-template.md; do
+    for template in pep-template-ai.md pep-template-no-ai.md pep-template.md blog-template.md; do
+        if [ "$template" = "pep-template.md" ] && [ "$ai_mode" != "default" ]; then
+            case "$ai_mode" in
+                on|off)
+                    local variant="pep-template-no-ai.md"
+                    [ "$ai_mode" = "on" ] && variant="pep-template-ai.md"
+                    if [ -f "${TEMPLATE_DIR}/${variant}" ]; then
+                        cp "${TEMPLATE_DIR}/${variant}" "$active"
+                        log "INFO" "Updated $active (kept AI block: $ai_mode)"
+                        updated=$((updated + 1))
+                    fi
+                    ;;
+                custom)
+                    log "WARN" "Kept $active: it's been customised and matches neither variant"
+                    log "INFO" "Compare it with ${TEMPLATE_DIR}/pep-template-no-ai.md (or -ai.md) and merge by hand"
+                    ;;
+            esac
+            continue
+        fi
         if [ -f "${template_src}/${template}" ]; then
             cp "${template_src}/${template}" "${TEMPLATE_DIR}/${template}"
             log "INFO" "Updated ${TEMPLATE_DIR}/${template}"
