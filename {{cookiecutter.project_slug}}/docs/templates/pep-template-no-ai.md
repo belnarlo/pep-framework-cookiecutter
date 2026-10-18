@@ -8,8 +8,8 @@
 **Priority:** [Priority]  
 **Created:** YYYY-MM-DD  
 **Updated:** YYYY-MM-DD  
-**Supersedes:** PEPID (if applicable)  
-**Superseded-By:** PEPID (if applicable)  
+**Supersedes:** N/A  
+**Superseded-By:** N/A  
 
 ## Abstract
 

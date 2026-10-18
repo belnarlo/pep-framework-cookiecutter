@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.2 — 2026-10-18
+
+### Fixed
+
+- New PEPs no longer list themselves under **Supersedes** and **Superseded-By**.
+  The templates had `PEPID (if applicable)` on both lines, and `new-pep`
+  replaces every `PEPID` with the new PEP's ID, so each PEP claimed to supersede
+  itself. Both lines now default to `N/A`. Existing PEPs keep the wrong lines
+  until fixed; in each repo:
+
+  ```bash
+  for f in docs/peps/pep-*.md; do
+    id=$(sed -n 's/^\*\*ID:\*\* \(PEP-[A-Z0-9-]*\).*/\1/p' "$f")
+    sed -i.bak "s/^\(\*\*Supersede[sd]-*B*y*:\*\*\) $id (if applicable)  $/\1 N\/A  /" "$f" && rm "$f.bak"
+  done
+  ```
+
+  Then `./tools/pep-tools.sh update-templates` to pick up the fixed templates.
+- Monitoring projects' generated README no longer suggests
+  `grafana-cli admin export-dashboard`, which doesn't exist (and `grafana-cli` is
+  deprecated in favour of `grafana cli`). It now shows an HTTP API export.
+
 ## 2.1 — 2026-10-01
 
 ### Fixed

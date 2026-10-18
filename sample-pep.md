@@ -8,8 +8,8 @@
 **Priority:** High  
 **Created:** 2024-12-23  
 **Updated:** 2024-12-23  
-**Supersedes:** PEP-PE-MON-001 (if applicable)  
-**Superseded-By:** PEP-PE-MON-001 (if applicable)  
+**Supersedes:** N/A  
+**Superseded-By:** N/A  
 
 > **Note:** This sample uses `PROJECT_CODE=PE`, `REPO_CODE=MON` — so the ID is `PEP-PE-MON-001`
 > and the file is named `pep-pe-mon-001-proj-project-foundation.md`.  

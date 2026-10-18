@@ -130,8 +130,10 @@ docker-compose -f docker/{{ ns.pep_id }}-compose.yml up -d
 - **Required in every PEP:** SLA definition, alert thresholds, escalation path
 
 ```bash
-# Export Grafana dashboard
-grafana-cli admin export-dashboard {{ ns.pep_id }}
+# Export a Grafana dashboard's JSON (HTTP API; the CLI has no export command)
+curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" \
+  "$GRAFANA_URL/api/dashboards/uid/<dashboard-uid>" | jq '.dashboard' > dashboards/<dashboard-uid>.json
+git commit -m "{{ ns.commit }}"
 
 # Check Prometheus rules
 promtool check rules alerts/{{ ns.pep_id }}-rules.yml
