@@ -31,6 +31,8 @@
 
   Run `update-tools` before `update-templates`, so the new logic is the one
   doing the update.
+- `pep-template-ai.md` lost a stray trailing space, so repos whose pre-commit
+  trims whitespace no longer see a diff on every `update-templates`.
 - Monitoring projects' generated README no longer suggests
   `grafana-cli admin export-dashboard`, which doesn't exist (and `grafana-cli` is
   deprecated in favour of `grafana cli`). It now shows an HTTP API export.

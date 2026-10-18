@@ -57,7 +57,7 @@ Why is this change needed? What problem does it solve?
 ### Context for AI Assistance
 
 ```
-You are helping implement PEPID: [Title]. 
+You are helping implement PEPID: [Title].
 Key requirements: [list key requirements]
 Technology stack: [relevant technologies]
 Constraints: [any limitations]
