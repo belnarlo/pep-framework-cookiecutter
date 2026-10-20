@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.2.1 — 2026-10-20
+
+### Fixed
+
+- `setup-existing.sh` no longer stops halfway when the Zabbix host is a URL.
+  The `.peprc` edit for `ZABBIX_HOST` used `/` as the `sed` delimiter, so a
+  value such as `http://zabbix/` failed with "bad flag in substitute command",
+  and `set -e` ended the run before `.peprc.local`, the hook permissions and
+  `pep-tools.sh init`. It now uses `|`, like `GRAFANA_URL`.
+
 ## 2.2 — 2026-10-18
 
 ### Fixed

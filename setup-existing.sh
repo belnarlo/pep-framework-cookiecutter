@@ -745,7 +745,7 @@ install_framework() {
         sed -i.bak "s/PROJECT_CODE=.*/PROJECT_CODE=\"$PROJECT_CODE\"/" .peprc
         sed -i.bak "s/REPO_CODE=.*/REPO_CODE=\"$REPO_CODE\"/" .peprc
         sed -i.bak "s/ENABLE_BLOGS=.*/ENABLE_BLOGS=\"$ENABLE_BLOGS\"/" .peprc
-        sed -i.bak "s/ZABBIX_HOST=.*/ZABBIX_HOST=\"$ZABBIX_HOST\"/" .peprc
+        sed -i.bak "s|ZABBIX_HOST=.*|ZABBIX_HOST=\"$ZABBIX_HOST\"|" .peprc
         sed -i.bak "s|GRAFANA_URL=.*|GRAFANA_URL=\"$GRAFANA_URL\"|" .peprc
         sed -i.bak "s/REQUIRE_PEP_REFERENCE=.*/REQUIRE_PEP_REFERENCE=$([ "$REQUIRE_PEP_REFERENCE" = "y" ] && echo "true" || echo "false")/" .peprc
         rm -f .peprc.bak
