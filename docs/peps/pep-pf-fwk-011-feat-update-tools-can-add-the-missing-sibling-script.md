@@ -63,6 +63,7 @@ way to get it.
 
 - After push, in each work repo: `update-tools` (a pre-flag script can't parse the
   flag), then `update-tools --add-ps1`, then `git add tools/pep-tools.ps1`.
+- Done 2026-11-03: all six work repos updated (stated by Timo).
 
 ## Testing Strategy
 
@@ -93,3 +94,4 @@ way to get it.
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
 | 1.0 | 2026-11-03 | Timo Vlot | Implemented in both scripts; 8 new test assertions (63/63) |
 | 1.1 | 2026-11-03 | Timo Vlot | Raw-URL source no longer an error: see PEP-PF-FWK-012 |
+| 1.2 | 2026-11-03 | Timo Vlot (with Claude) | Roll-out done: all six work repos updated (stated by Timo); the raw-URL source case that blocked it is PEP-PF-FWK-012 |
