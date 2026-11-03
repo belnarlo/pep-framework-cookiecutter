@@ -143,6 +143,7 @@ your-new-project/
 ./tools/pep-tools.sh status                       # Status summary
 ./tools/pep-tools.sh next                         # Draft/Active PEPs by priority — what to work on next
 ./tools/pep-tools.sh stubs [--threshold N]        # PEPs still mostly template boilerplate
+./tools/pep-tools.sh ask <term>                   # Which PEP is about <term>? Optional model via .peprc.local
 
 # Build Logs (when ENABLE_BLOGS=y)
 ./tools/pep-tools.sh new-blog [blog-num] [pep-num]
@@ -151,7 +152,7 @@ your-new-project/
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename old-format PEPs to new scheme
 ./tools/pep-tools.sh ai-block <on|off|status>     # Switch the PEP template's AI block on/off
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
-./tools/pep-tools.sh update-tools                 # Update pep-tools.sh (defaults to this repo's git URL)
+./tools/pep-tools.sh update-tools                 # Update pep-tools.sh, and pep-tools.ps1 if present (defaults to this repo's git URL)
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default; keeps the AI-block choice)
 ./tools/pep-tools.sh update-hooks                 # Refresh the commit-msg hook and reinstall it
 ./tools/pep-tools.sh help                         # Full help with current repo's ID format
@@ -183,6 +184,19 @@ cp -r ../temp/{docs,tools,.peprc,.peprc.local.example,.gitignore} .
 ---
 
 ## Upgrading an Existing PEP Framework Installation
+
+### `ask` and one-step updates (2.3)
+
+```bash
+./tools/pep-tools.sh update-tools
+./tools/pep-tools.sh update-templates
+```
+
+From 2.3, `update-tools` in either script also refreshes the other one when the
+repo has it, so one run keeps `pep-tools.sh` and `pep-tools.ps1` in step. Repos
+still on 2.2 need one extra run of the other script this time
+(`pwsh tools/pep-tools.ps1 update-tools`), because the 2.2 script doesn't know
+how. New command: `ask <term>`. Details in [CHANGELOG.md](CHANGELOG.md).
 
 ### Hook fix for merge commits (2.1)
 

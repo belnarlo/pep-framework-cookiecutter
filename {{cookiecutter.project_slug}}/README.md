@@ -203,6 +203,7 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
                                                    # --show-all lists them in full
 ./tools/pep-tools.sh next                         # Draft/Active PEPs by priority — what to work on next
 ./tools/pep-tools.sh stubs [--threshold N]        # PEPs still mostly template boilerplate
+./tools/pep-tools.sh ask <term>                   # Which PEP is about <term>? (see "Asking a model" below)
 ./tools/pep-tools.sh migrate [--dry-run]          # Rename PEPs to current scheme
 
 {% if cookiecutter.use_blogs == 'y' %}
@@ -213,7 +214,7 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 # Framework maintenance
 ./tools/pep-tools.sh ai-block <on|off|status>     # Switch the PEP template's AI block on/off
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
-./tools/pep-tools.sh update-tools                 # Update pep-tools.sh (defaults to the framework's git repo)
+./tools/pep-tools.sh update-tools                 # Update pep-tools.sh, and pep-tools.ps1 if present (defaults to the framework's git repo)
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default; keeps the AI-block choice)
 ./tools/pep-tools.sh update-hooks                 # Refresh the commit-msg hook and reinstall it
 ./tools/pep-tools.sh help                         # Full help
@@ -228,7 +229,7 @@ On Windows, use `tools/pep-tools.ps1` with the same commands and arguments (e.g.
 | File | Purpose |
 |------|---------|
 | `.peprc` | Project settings — `PROJECT_CODE`, `REPO_CODE`, `ENABLE_BLOGS` — **commit this** |
-| `.peprc.local` | Personal settings — author, editor, `PEP_FRAMEWORK_SOURCE` — **gitignored** |
+| `.peprc.local` | Personal settings — author, editor, `PEP_FRAMEWORK_SOURCE`, `PEP_ASK_*` — **gitignored** |
 
 ```bash
 # Key .peprc settings
@@ -236,6 +237,26 @@ PROJECT_CODE="{{ cookiecutter.project_code }}"
 REPO_CODE="{{ cookiecutter.repo_code }}"
 ENABLE_BLOGS="{{ cookiecutter.use_blogs }}"
 ```
+
+### Asking a model (`ask`)
+
+`ask <term>` searches the PEPs (case-insensitive) and prints, per matching PEP,
+its ID, title and up to five matching lines. That works for everyone with no
+setup.
+
+To have a model name the PEP instead, set these in your **`.peprc.local`** (they
+are ignored in `.peprc`, so a shared repo can't point it anywhere):
+
+```bash
+PEP_ASK_URL="https://llm.example.ts.net/v1"   # any OpenAI-compatible endpoint
+PEP_ASK_MODEL="local"                         # default: local
+PEP_ASK_KEY_ENV="LITELLM_MASTER_KEY"          # env var holding the key (default shown)
+```
+
+Only the matched lines are sent, never whole files. The key is read from the
+named environment variable, never from a file. If the request fails, the
+matches are printed with a warning (exit code 2). Needs `curl` and `jq` for the
+bash version.
 
 {% if cookiecutter.use_git_hooks == 'y' %}
 

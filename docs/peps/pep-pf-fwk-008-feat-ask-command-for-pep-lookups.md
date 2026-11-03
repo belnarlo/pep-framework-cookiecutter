@@ -3,7 +3,7 @@
 **ID:** PEP-PF-FWK-008  
 **Title:** ask command for PEP lookups  
 **Author:** Timo Vlot  
-**Status:** Draft  
+**Status:** Implemented  
 **Type:** Feature  
 **Priority:** Medium  
 **Created:** 2026-11-03  
@@ -66,7 +66,7 @@ directory and ID format, and every repo gets it through `update-tools`.
 
 - `ask` in both scripts, help text, README, commented settings in the `.peprc.local`
   that `init` writes, CHANGELOG entry with the next version.
-- Built on the work MacBook by Claude Code (Todoist, 2026-11-03).
+- Built 2026-11-03 on Timo's personal Mac by Claude Code (planned for the work MacBook; done here instead). Released in 2.3.
 
 ### Phase 2: Roll-out
 
@@ -101,3 +101,4 @@ directory and ID format, and every repo gets it through `update-tools`.
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
+| 1.0 | 2026-11-03 | Timo Vlot | Implemented in both scripts (2.3); `tests/test-ask.sh` 30/30 against a stand-in server; settings read from `.peprc.local` only |

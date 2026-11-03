@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 PEP Management Tools (PowerShell edition)
-Version: 2.1
+Version: 2.3
 Command-line tools for managing Project Enhancement Packages on Windows.
 Mirrors tools/pep-tools.sh — same commands, same file/ID formats, same .peprc config.
 #>
@@ -46,6 +46,9 @@ function Import-PepConfig {
 }
 
 Import-PepConfig -Path $script:CONFIG_FILE
+# ask's model settings are personal: honoured from .peprc.local only, never from
+# the shared .peprc, so a repo can't point it anywhere.
+Remove-Variable -Name PEP_ASK_URL, PEP_ASK_MODEL, PEP_ASK_KEY_ENV -Scope Script -ErrorAction SilentlyContinue
 Import-PepConfig -Path "$($script:CONFIG_FILE).local"
 
 function Get-EnableBlogs {
@@ -1101,6 +1104,90 @@ function Show-PepNext {
 # Compare-Object (a multiset/content comparison, not a positional line diff)
 # as a heuristic — good enough to spot untouched sections, not a precise diff.
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# ask <term>: grep the PEPs for a term and, if a model is configured in
+# .peprc.local, have it name the matching PEPs (PEP-PF-FWK-008). Only the
+# matched lines are sent, never whole files. Exit 0 = answered (or matches
+# shown), 1 = no match or bad input, 2 = the model request failed.
+# ----------------------------------------------------------------------------
+$script:ASK_SYSTEM_PROMPT = "You answer questions about change proposals (PEPs). Use only the matches given. Reply with the PEP ID and title for each relevant match, one line each. If none fits, say so."
+
+function Invoke-PepAsk {
+    param([string[]]$Arguments)
+
+    $term = ($Arguments -join ' ').Trim()
+    if (-not $term) {
+        Write-PepLog ERROR "Usage: pep-tools.ps1 ask <term>"
+        exit 1
+    }
+    if (-not (Test-Path $script:PEP_DIR)) {
+        Write-PepLog ERROR "PEP directory does not exist: $($script:PEP_DIR)"
+        exit 1
+    }
+
+    $matchText = ""
+    $names = ""
+    $files = Get-ChildItem -Path $script:PEP_DIR -Filter "pep-*.md" -File -ErrorAction SilentlyContinue | Sort-Object Name
+    foreach ($pep in $files) {
+        $hits = @(Select-String -Path $pep.FullName -SimpleMatch -Pattern $term | Select-Object -First 5)
+        if ($hits.Count -eq 0) { continue }
+        $num = Get-PepNumFromFile $pep.FullName
+        $pepId = Get-PepId ([int]$num)
+        $title = Get-PepField $pep.FullName "Title"
+        $matchText += "== $($pep.Name)`nID: $pepId`nTitle: $title`n"
+        $matchText += (($hits | ForEach-Object { $_.Line.TrimEnd("`r") }) -join "`n") + "`n`n"
+        $names += "  $($pep.Name)`n"
+    }
+
+    if (-not $matchText) {
+        Write-Output "No PEP mentions: $term"
+        exit 1
+    }
+
+    if (-not $script:PEP_ASK_URL) {
+        [Console]::Out.Write($matchText)
+        return
+    }
+
+    $keyEnv = if ($script:PEP_ASK_KEY_ENV) { $script:PEP_ASK_KEY_ENV } else { "LITELLM_MASTER_KEY" }
+    if ($keyEnv -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        Write-PepLog ERROR "PEP_ASK_KEY_ENV must be an environment variable name"
+        exit 1
+    }
+    $key = [Environment]::GetEnvironmentVariable($keyEnv)
+    $model = if ($script:PEP_ASK_MODEL) { $script:PEP_ASK_MODEL } else { "local" }
+
+    $body = @{
+        model       = $model
+        temperature = 0
+        messages    = @(
+            @{ role = "system"; content = $script:ASK_SYSTEM_PROMPT },
+            @{ role = "user"; content = "Which PEP is about: $term`n`nMatches:`n$matchText" }
+        )
+    } | ConvertTo-Json -Depth 5
+    $headers = @{}
+    if ($key) { $headers["Authorization"] = "Bearer $key" }
+    $url = $script:PEP_ASK_URL.TrimEnd('/') + "/chat/completions"
+
+    $answer = $null
+    try {
+        $response = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -ContentType "application/json" `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 60
+        $answer = $response.choices[0].message.content
+    } catch {
+        $answer = $null
+    }
+
+    if ($answer) {
+        [Console]::Out.Write("$answer`n`nMatched:`n$names")
+        return
+    }
+
+    [Console]::Out.Write($matchText)
+    Write-PepLog WARN "The model request to $($script:PEP_ASK_URL) failed; showing the matches only"
+    exit 2
+}
+
 function Get-PepBodyLines {
     param([string]$FilePath)
     $body = $false
@@ -1434,6 +1521,13 @@ DEBUG="false"
 PEP_AUTHOR="$authorName"
 DEFAULT_EDITOR="notepad"
 AUTO_OPEN_EDITOR="true"
+
+# ask: point it at an OpenAI-compatible endpoint to have a model name the PEP.
+# Only matched lines are sent. The key is read from the env var named here,
+# never from this file.
+# PEP_ASK_URL="https://llm.example.ts.net/v1"
+# PEP_ASK_MODEL="local"
+# PEP_ASK_KEY_ENV="LITELLM_MASTER_KEY"
 "@ | Set-Content -Path $localConfig
         Write-PepLog INFO "Created personal configuration: $localConfig"
     }
@@ -1523,6 +1617,61 @@ function Invoke-GitClone {
 }
 
 # ----------------------------------------------------------------------------
+# Refresh tools/pep-tools.sh from the same source as pep-tools.ps1, if this
+# repo has it (PEP-PF-FWK-009). Never adds it to a PowerShell-only repo. Backed
+# up first and restored if the copy fails or doesn't parse. $false on failure.
+# ----------------------------------------------------------------------------
+function Sync-PepSiblingTools {
+    param([string]$SourceFile)
+
+    $dest = "tools/pep-tools.sh"
+    if (-not (Test-Path $dest)) { return $true }
+    if (-not $SourceFile) {
+        Write-PepLog WARN "Raw-file source: $dest was NOT refreshed — run 'bash $dest update-tools' too"
+        return $true
+    }
+    if (-not (Test-Path $SourceFile)) {
+        Write-PepLog WARN "No pep-tools.sh in the source; $dest left as it was"
+        return $true
+    }
+
+    $backup = "$dest.bak"
+    Copy-Item $dest $backup -Force
+    $restore = {
+        Copy-Item $backup $dest -Force
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+    }
+    try {
+        Copy-Item $SourceFile $dest -Force
+    } catch {
+        & $restore
+        Write-PepLog ERROR "Couldn't copy ${SourceFile}; $dest left as it was (pep-tools.ps1 was updated)"
+        return $false
+    }
+    if ((Get-Item $dest).Length -eq 0) {
+        & $restore
+        Write-PepLog ERROR "The new $dest is empty; old copy kept (pep-tools.ps1 was updated)"
+        return $false
+    }
+
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        & bash -n $dest *> $null
+        if ($LASTEXITCODE -ne 0) {
+            & $restore
+            Write-PepLog ERROR "The new $dest doesn't parse; old copy kept (pep-tools.ps1 was updated)"
+            return $false
+        }
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+        Write-PepLog INFO "Updated $dest from the same source"
+    } else {
+        Remove-Item $backup -Force -ErrorAction SilentlyContinue
+        Write-PepLog WARN "Updated $dest from the same source; bash isn't available, so it wasn't parse-checked"
+    }
+    if ($IsLinux -or $IsMacOS) { & chmod +x $dest }
+    return $true
+}
+
+# ----------------------------------------------------------------------------
 # Update pep-tools.ps1 from a source path, git URL, or raw-file URL
 # ----------------------------------------------------------------------------
 function Update-PepTools {
@@ -1557,10 +1706,23 @@ function Update-PepTools {
         Write-PepLog INFO "Restored $dest from backup; nothing changed"
     }
 
+    # The sibling pep-tools.sh is staged from the same source before the git
+    # clone is removed; stays $null for a raw-file URL.
+    $siblingSrc = $null
+    $siblingStage = $null
+
     try {
         if (Test-GitSource $source) {
             Invoke-GitClone $source
             $srcFile = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools/pep-tools.ps1"
+            $clonedSibling = Join-Path $script:GitCloneTmpDir "{{cookiecutter.project_slug}}/tools/pep-tools.sh"
+            if (Test-Path $clonedSibling) {
+                $siblingStage = [System.IO.Path]::GetTempFileName()
+                Copy-Item $clonedSibling $siblingStage -Force
+                $siblingSrc = $siblingStage
+            } else {
+                $siblingSrc = $clonedSibling
+            }
             if (-not (Test-Path $srcFile)) {
                 Write-PepLog ERROR "Source file not found: $srcFile"
                 & $restoreTools
@@ -1580,6 +1742,7 @@ function Update-PepTools {
                 exit 1
             }
             Copy-Item $srcFile $dest -Force
+            $siblingSrc = Join-Path (Split-Path -Parent $srcFile) "pep-tools.sh"
             [void](Sync-PepHookFromDir (Split-Path -Parent $srcFile))
         }
     } catch {
@@ -1611,6 +1774,12 @@ function Update-PepTools {
         }
         Write-PepLog INFO "Saved PEP_FRAMEWORK_SOURCE to $localConfig"
     }
+
+    # Keep the bash copy in step (PEP-PF-FWK-009). A failure there has already
+    # been rolled back; pep-tools.ps1 itself stays updated.
+    $siblingOk = Sync-PepSiblingTools -SourceFile $siblingSrc
+    if ($siblingStage) { Remove-Item $siblingStage -Force -ErrorAction SilentlyContinue }
+    if (-not $siblingOk) { exit 1 }
 }
 
 # ----------------------------------------------------------------------------
@@ -1830,7 +1999,7 @@ function Show-PepHelp {
     $idFormat = $exampleId -replace '001$', ''
     $enableBlogs = Get-EnableBlogs
 
-    Write-Host "PEP Management Tool v2.0 (PowerShell)" -ForegroundColor Blue
+    Write-Host "PEP Management Tool v2.3 (PowerShell)" -ForegroundColor Blue
     Write-Host "========================"
     Write-Host ""
     Write-Host "Usage: .\tools\pep-tools.ps1 <command> [arguments]" -ForegroundColor Green
@@ -1852,6 +2021,9 @@ function Show-PepHelp {
     Write-Host "                                          --since adds a Changes section (raised/completed/updated)"
     Write-Host "  next                                    Draft/Active PEPs grouped by priority — what to work on next"
     Write-Host "  stubs [--threshold N]                  List PEPs still mostly template boilerplate (default 85%)"
+    Write-Host "  ask <term>                              Which PEP is about <term>? Prints the matching lines; with"
+    Write-Host "                                          PEP_ASK_URL in .peprc.local, a model names the PEPs from"
+    Write-Host "                                          those lines only (whole files are never sent)"
     Write-Host "  migrate [--dry-run]                    Rename existing PEPs to current naming scheme"
     Write-Host "  fix-naming [--dry-run]                 Repair PEPs written with the old CODES-PEP-NNN ID order"
     Write-Host ""
@@ -1865,7 +2037,8 @@ function Show-PepHelp {
     Write-Host "                                          — the only way to bootstrap skills into a project that"
     Write-Host "                                          predates this feature or was generated with it off"
     Write-Host "  update-tools [--source <path|git|url>] Update pep-tools.ps1 from source (defaults to the"
-    Write-Host "                                          framework's git repo if none is configured)"
+    Write-Host "                                          framework's git repo if none is configured), and"
+    Write-Host "                                          pep-tools.sh too if this repo has it"
     Write-Host "  update-templates [--source <path|git>] Update PEP/BLOG templates from source (same default)"
     Write-Host "  update-hooks [--source <path|git>]     Refresh tools/git-hooks/commit-msg from source AND"
     Write-Host "                                         reinstall it into .git/hooks (update-tools does this too)"
@@ -1906,7 +2079,8 @@ function Show-PepHelp {
     Write-Host ""
     Write-Host "Configuration:" -ForegroundColor Green
     Write-Host "  .peprc       — project settings: PROJECT_CODE, REPO_CODE, ENABLE_BLOGS (commit this)"
-    Write-Host "  .peprc.local — personal settings: PEP_AUTHOR, DEFAULT_EDITOR, PEP_FRAMEWORK_SOURCE (gitignored)"
+    Write-Host "  .peprc.local — personal settings: PEP_AUTHOR, DEFAULT_EDITOR, PEP_FRAMEWORK_SOURCE,"
+    Write-Host "                 PEP_ASK_URL, PEP_ASK_MODEL, PEP_ASK_KEY_ENV (gitignored)"
 }
 
 # ----------------------------------------------------------------------------
@@ -1922,6 +2096,7 @@ switch ($Command) {
     "status"           { Show-PepStatus -Arguments $Rest }
     "next"             { Show-PepNext }
     "stubs"            { Show-PepStubs -Arguments $Rest }
+    "ask"              { Invoke-PepAsk -Arguments $Rest }
     "migrate"          { Invoke-PepMigrate -Arguments $Rest }
     "fix-naming"       { Invoke-PepFixNaming -Arguments $Rest }
     "ai-block"         { Invoke-PepAiBlock -Arguments $Rest }

@@ -1,5 +1,52 @@
 # Changelog
 
+## 2.3 — 2026-11-03
+
+### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
+
+- `ask <term>` (PEP-PF-FWK-008): which PEP is about a term? It searches the
+  PEPs case-insensitively and prints, per matching PEP, its ID, title and up to
+  five matching lines. With `PEP_ASK_URL` set, it sends those lines (never
+  whole files) to an OpenAI-compatible endpoint and prints the model's answer
+  plus the matched files. Settings, all in `.peprc.local` only (ignored in
+  `.peprc`, so a shared repo can't redirect it): `PEP_ASK_URL`,
+  `PEP_ASK_MODEL` (default `local`), `PEP_ASK_KEY_ENV` (the environment
+  variable holding the key, default `LITELLM_MASTER_KEY`; the key is never
+  read from a file or put on a command line). Exit codes: 0 answered or
+  matches shown, 1 no match, 2 the model request failed (matches still shown).
+  The bash version needs `curl` and `jq` for the model call. `init` and
+  `.peprc.local.example` carry the settings, commented out.
+
+### Fixed
+
+- `update-tools` keeps both scripts in step (PEP-PF-FWK-009). Each script used
+  to replace only itself, so a repo updated with bash kept an old
+  `pep-tools.ps1` (found in two homelab repos, 51 lines behind). Now, when the
+  repo has the other script, it is refreshed from the same source, backed up
+  first, parse-checked (`pwsh` or `bash -n`, when installed; otherwise it says
+  it wasn't checked) and restored on failure. A failed sibling update exits
+  non-zero but leaves the main script updated. A repo without the other script
+  doesn't get one. Raw-file URL sources print a warning instead.
+- Script version headers now say 2.3 (they had stayed at 2.1 through 2.2).
+
+### Getting it in an existing repo
+
+```bash
+./tools/pep-tools.sh update-tools
+./tools/pep-tools.sh update-templates
+```
+
+Repos on 2.2 with both scripts: also run `pwsh tools/pep-tools.ps1 update-tools`
+once (a 2.2 script doesn't know about the sibling yet). From 2.3 on, one run
+does both.
+
+### Tests
+
+- `tests/test-ask.sh`: `ask` on both scripts against a stand-in model server on
+  127.0.0.1 (Python), no network.
+- `tests/test-commit-msg-hook.sh`: sibling refresh, bash-only repos, and a
+  sibling that doesn't parse.
+
 ## 2.2.1 — 2026-10-20
 
 ### Fixed

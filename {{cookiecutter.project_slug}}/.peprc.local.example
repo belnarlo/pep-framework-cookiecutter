@@ -13,3 +13,10 @@ AUTO_OPEN_EDITOR="true"
 # Path or URL to your local copy of the pep-framework-cookiecutter repo.
 # Set this so "pep-tools.sh update-tools" works without --source each time.
 # PEP_FRAMEWORK_SOURCE=""
+
+# ask: point it at an OpenAI-compatible endpoint to have a model name the PEP.
+# Only matched lines are sent. The key is read from the env var named here,
+# never from this file.
+# PEP_ASK_URL="https://llm.example.ts.net/v1"
+# PEP_ASK_MODEL="local"
+# PEP_ASK_KEY_ENV="LITELLM_MASTER_KEY"

@@ -230,6 +230,39 @@ expect_failure "[$CLI] update-tools refuses a source that doesn't parse" \
 expect_success "[$CLI] ...and leaves the old script in place, with no backup" \
     bash -c 'cmp -s "$1" tools/pep-tools.sh && cmp -s "$2" tools/pep-tools.ps1 && ! ls tools/*.bak >/dev/null 2>&1' _ "$WORK/before-$CLI.sh" "$WORK/before-$CLI.ps1"
 
+# update-tools keeps the sibling script in step (PEP-PF-FWK-009)
+echo "# --- update-tools sibling via $CLI"
+if [ "$CLI" = "ps1" ]; then own=pep-tools.ps1; sib=pep-tools.sh; else own=pep-tools.sh; sib=pep-tools.ps1; fi
+new_repo "$WORK/sibling-$CLI"
+cp "${TOOLS_DIR}/pep-tools.sh" "${TOOLS_DIR}/pep-tools.ps1" tools/
+printf '# stale sibling\n' > "tools/$sib"
+pep update-tools --source "$SRC_TOOLS" >/dev/null 2>&1
+expect_success "[$CLI] update-tools refreshes the sibling $sib too" \
+    cmp -s "$SRC_TOOLS/$sib" "tools/$sib"
+expect_success "[$CLI] ...with no backups left" \
+    bash -c '! ls tools/*.bak >/dev/null 2>&1'
+
+new_repo "$WORK/sibling-only-$CLI"
+cp "${TOOLS_DIR}/$own" tools/
+pep update-tools --source "$SRC_TOOLS" >/dev/null 2>&1
+expect_success "[$CLI] update-tools doesn't add $sib to a repo without it" \
+    test ! -e "tools/$sib"
+
+new_repo "$WORK/sibling-broken-$CLI"
+cp "${TOOLS_DIR}/pep-tools.sh" "${TOOLS_DIR}/pep-tools.ps1" tools/
+printf '# old but working sibling\n' > "tools/$sib"
+cp "tools/$sib" "$WORK/sib-before-$CLI"
+printf '# stale own\n' >> "tools/$own"
+HALF="$WORK/half-broken-$CLI"
+mkdir -p "$HALF/git-hooks"
+cp "$SRC_TOOLS/$own" "$HALF/"
+cp "$HOOK_SRC" "$HALF/git-hooks/commit-msg"
+if [ "$sib" = "pep-tools.ps1" ]; then printf 'function { (\n' > "$HALF/$sib"; else printf 'if then fi (\n' > "$HALF/$sib"; fi
+expect_failure "[$CLI] update-tools reports a sibling that doesn't parse" \
+    pep update-tools --source "$HALF"
+expect_success "[$CLI] ...keeps the old sibling and still updates $own, no backups" \
+    bash -c 'cmp -s "$1" "tools/$3" && cmp -s "$2/$4" "tools/$4" && ! ls tools/*.bak >/dev/null 2>&1' _ "$WORK/sib-before-$CLI" "$HALF" "$sib" "$own"
+
 # update-templates keeps the repo's ai-block choice (or a customised template)
 echo "# --- update-templates via $CLI"
 new_repo "$WORK/templates-$CLI"

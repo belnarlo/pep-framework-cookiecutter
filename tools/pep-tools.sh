@@ -1,6 +1,6 @@
 #!/bin/bash
 # PEP Management Tools
-# Version: 2.1
+# Version: 2.3
 # Description: Command-line tools for managing Project Enhancement Packages
 
 set -e
@@ -28,6 +28,9 @@ NC=$'\033[0m' # No Color
 if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
 fi
+# ask's model settings are personal: honoured from .peprc.local only, never from
+# the shared .peprc (or the environment), so a repo can't point it anywhere.
+unset PEP_ASK_URL PEP_ASK_MODEL PEP_ASK_KEY_ENV
 if [ -f "${CONFIG_FILE}.local" ]; then
     source "${CONFIG_FILE}.local"
 fi
@@ -1438,6 +1441,87 @@ show_next() {
     fi
 }
 
+# ask <term>: grep the PEPs for a term and, if a model is configured in
+# .peprc.local, have it name the matching PEPs (PEP-PF-FWK-008). Only the
+# matched lines are sent, never whole files. Exit 0 = answered (or matches
+# shown), 1 = no match or bad input, 2 = the model request failed.
+ASK_SYSTEM_PROMPT="You answer questions about change proposals (PEPs). Use only the matches given. Reply with the PEP ID and title for each relevant match, one line each. If none fits, say so."
+
+ask_peps() {
+    local term="$*"
+    if [ -z "$term" ]; then
+        log "ERROR" "Usage: $0 ask <term>"
+        exit 1
+    fi
+    if [ ! -d "$PEP_DIR" ]; then
+        log "ERROR" "PEP directory does not exist: $PEP_DIR"
+        exit 1
+    fi
+
+    local matches="" names="" pep num pep_id title hits
+    for pep in "$PEP_DIR"/pep-*.md; do
+        [ -f "$pep" ] || continue
+        grep -qiF -- "$term" "$pep" || continue
+        num=$(get_pep_num_from_file "$pep")
+        pep_id=$(get_pep_id "$((10#$num))")
+        title=$(get_pep_field "$pep" "Title")
+        hits=$(grep -iF -m5 -- "$term" "$pep" | sed 's/\r$//')
+        matches+="== $(basename "$pep")"$'\n'"ID: ${pep_id}"$'\n'"Title: ${title}"$'\n'"${hits}"$'\n\n'
+        names+="  $(basename "$pep")"$'\n'
+    done
+
+    if [ -z "$matches" ]; then
+        echo "No PEP mentions: $term"
+        exit 1
+    fi
+
+    if [ -z "${PEP_ASK_URL:-}" ]; then
+        printf '%s' "$matches"
+        return 0
+    fi
+    if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+        printf '%s' "$matches"
+        log "WARN" "curl and jq are needed to ask a model; showing the matches only"
+        return 0
+    fi
+
+    local key_env="${PEP_ASK_KEY_ENV:-LITELLM_MASTER_KEY}"
+    if ! [[ "$key_env" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        log "ERROR" "PEP_ASK_KEY_ENV must be an environment variable name"
+        exit 1
+    fi
+    local key="${!key_env:-}"
+
+    local body_file config_file response answer
+    body_file=$(mktemp)
+    config_file=$(mktemp)
+    jq -n --arg m "${PEP_ASK_MODEL:-local}" --arg s "$ASK_SYSTEM_PROMPT" \
+          --arg q "$term" --arg c "$matches" \
+        '{model: $m, temperature: 0, messages: [
+            {role: "system", content: $s},
+            {role: "user", content: ("Which PEP is about: " + $q + "\n\nMatches:\n" + $c)}]}' > "$body_file"
+    # The key goes to curl through a config file, never on the command line.
+    chmod 600 "$config_file"
+    if [ -n "$key" ]; then
+        printf 'header = "Authorization: Bearer %s"\n' "$key" > "$config_file"
+    fi
+
+    if response=$(curl -sS --fail --max-time 60 -K "$config_file" \
+            -H "Content-Type: application/json" --data-binary @"$body_file" \
+            "${PEP_ASK_URL%/}/chat/completions" 2>/dev/null) \
+       && answer=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null) \
+       && [ -n "$answer" ]; then
+        rm -f "$body_file" "$config_file"
+        printf '%s\n\nMatched:\n%s' "$answer" "$names"
+        return 0
+    fi
+
+    rm -f "$body_file" "$config_file"
+    printf '%s' "$matches"
+    log "WARN" "The model request to $PEP_ASK_URL failed; showing the matches only"
+    exit 2
+}
+
 # List PEPs whose content is still mostly template boilerplate — i.e. not yet
 # fleshed out. Compares each PEP's body (everything from the first "## "
 # heading onward, so the auto-filled header table doesn't count) against the
@@ -1551,6 +1635,13 @@ EOF
 PEP_AUTHOR="$(git config user.name 2>/dev/null || echo 'Your Name')"
 DEFAULT_EDITOR="${EDITOR:-vi}"
 AUTO_OPEN_EDITOR="true"
+
+# ask: point it at an OpenAI-compatible endpoint to have a model name the PEP.
+# Only matched lines are sent. The key is read from the env var named here,
+# never from this file.
+# PEP_ASK_URL="https://llm.example.ts.net/v1"
+# PEP_ASK_MODEL="local"
+# PEP_ASK_KEY_ENV="LITELLM_MASTER_KEY"
 EOF
         log "INFO" "Created personal configuration: $local_config"
     fi
@@ -1668,8 +1759,12 @@ update_tools() {
         log "INFO" "Restored $dest from backup; nothing changed"
     }
 
+    # Where the sibling pep-tools.ps1 comes from; stays empty for a raw-file URL.
+    local sibling_dir=""
+
     if is_git_source "$source"; then
         clone_git_source "$source"
+        sibling_dir="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools"
         local src_file="${_GIT_SRC_TMPDIR}/repo/{{cookiecutter.project_slug}}/tools/pep-tools.sh"
         if [ ! -f "$src_file" ]; then
             log "ERROR" "Source file not found: $src_file"
@@ -1695,7 +1790,8 @@ update_tools() {
             restore_tools; exit 1
         fi
         cp "$src_file" "$dest"
-        sync_hook_from_dir "$(dirname "$src_file")" || true
+        sibling_dir="$(dirname "$src_file")"
+        sync_hook_from_dir "$sibling_dir" || true
     fi
 
     # Only keep the new script if it parses; otherwise roll back.
@@ -1719,9 +1815,57 @@ update_tools() {
         log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $local_config"
     fi
 
+    # Keep the PowerShell copy in step (PEP-PF-FWK-009). A failure there has
+    # already been rolled back; pep-tools.sh itself stays updated.
+    local sibling_status=0
+    sync_sibling_tools "$sibling_dir" || sibling_status=1
+
     # Exit immediately — bash reads scripts in chunks from disk; continuing after
     # replacing this file causes it to read garbage at the old byte offset.
-    exit 0
+    exit "$sibling_status"
+}
+
+# Refresh tools/pep-tools.ps1 from the same source as pep-tools.sh, if this
+# repo has it (PEP-PF-FWK-009). Never adds it to a bash-only repo. Backed up
+# first and restored if the copy fails or doesn't parse. Returns 1 on failure.
+sync_sibling_tools() {
+    local src_dir="$1"
+    local dest="tools/pep-tools.ps1"
+    [ -f "$dest" ] || return 0
+
+    if [ -z "$src_dir" ]; then
+        log "WARN" "Raw-file source: $dest was NOT refreshed — run 'pwsh $dest update-tools' too"
+        return 0
+    fi
+    local src="$src_dir/pep-tools.ps1"
+    if [ ! -f "$src" ]; then
+        log "WARN" "No pep-tools.ps1 in $src_dir; $dest left as it was"
+        return 0
+    fi
+
+    local backup="${dest}.bak"
+    cp "$dest" "$backup"
+    if ! cp "$src" "$dest" 2>/dev/null || [ ! -s "$dest" ]; then
+        cp "$backup" "$dest"; rm -f "$backup"
+        log "ERROR" "Couldn't copy $src; $dest left as it was (pep-tools.sh was updated)"
+        return 1
+    fi
+
+    if command -v pwsh >/dev/null 2>&1; then
+        if ! PEP_PARSE_FILE="$dest" pwsh -NoProfile -NonInteractive -Command \
+            '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $env:PEP_PARSE_FILE).Path, [ref]$null, [ref]$e); if ($e.Count -gt 0) { exit 1 }' \
+            >/dev/null 2>&1; then
+            cp "$backup" "$dest"; rm -f "$backup"
+            log "ERROR" "The new $dest doesn't parse; old copy kept (pep-tools.sh was updated)"
+            return 1
+        fi
+        rm -f "$backup"
+        log "INFO" "Updated $dest from the same source"
+    else
+        rm -f "$backup"
+        log "WARN" "Updated $dest from the same source; pwsh isn't installed, so it wasn't parse-checked"
+    fi
+    return 0
 }
 
 # Update template files from a source path
@@ -1937,7 +2081,7 @@ show_help() {
     local id_format="${example_id%001}NNN"
 
     cat << EOF
-${BLUE}PEP Management Tool v2.0${NC}
+${BLUE}PEP Management Tool v2.3${NC}
 ========================
 
 ${GREEN}Usage:${NC} $0 <command> [arguments]
@@ -1962,6 +2106,9 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  ${YELLOW}new-blog${NC} [blog-num] [p
                                                --show-all to list every PEP in full
   ${YELLOW}next${NC}                                    Draft/Active PEPs grouped by priority — what to work on next
   ${YELLOW}stubs${NC} [--threshold N]                   List PEPs still mostly template boilerplate (default 85%)
+  ${YELLOW}ask${NC} <term>                              Which PEP is about <term>? Prints the matching lines; with
+                                               PEP_ASK_URL in .peprc.local, a model names the PEPs from
+                                               those lines only (whole files are never sent)
   ${YELLOW}migrate${NC} [--dry-run]                     Rename existing PEPs to current naming scheme
   ${YELLOW}fix-naming${NC} [--dry-run]                  Repair PEPs written with the old CODES-PEP-NNN ID order
 
@@ -1975,7 +2122,8 @@ ${GREEN}Framework commands:${NC}
                                                — the only way to bootstrap skills into a project that
                                                predates this feature or was generated with it off
   ${YELLOW}update-tools${NC} [--source <path|git|url>]  Update pep-tools.sh from source (defaults to the
-                                               framework's git repo if none is configured)
+                                               framework's git repo if none is configured), and
+                                               pep-tools.ps1 too if this repo has it
   ${YELLOW}update-templates${NC} [--source <path|git>]  Update PEP/BLOG templates from source (same default)
   ${YELLOW}update-hooks${NC} [--source <path|git>]      Refresh tools/git-hooks/commit-msg from source AND
                                                reinstall it into .git/hooks (update-tools does this too)
@@ -1989,6 +2137,7 @@ $([ "${ENABLE_BLOGS:-y}" = "y" ] && echo "  $0 new-blog 3 5                     
   $0 status --since 2026-07-01                # meeting prep: summary + by-status list + changes since date
   $0 status --show-all                       # by-status list with no old-closed-PEPs collapsing
   $0 next                                    # what to pick up next, by priority
+  $0 ask ryot                                # which PEP mentions Ryot?
   $0 stubs                                   # PEPs that still need fleshing out
   $0 migrate --dry-run                       # preview rename of old-format PEPs
   $0 migrate                                 # apply rename
@@ -2015,7 +2164,8 @@ ${GREEN}ID & file naming (this repo):${NC}
 
 ${GREEN}Configuration:${NC}
   ${YELLOW}.peprc${NC}       — project settings: PROJECT_CODE, REPO_CODE, ENABLE_BLOGS (commit this)
-  ${YELLOW}.peprc.local${NC} — personal settings: PEP_AUTHOR, DEFAULT_EDITOR, PEP_FRAMEWORK_SOURCE (gitignored)
+  ${YELLOW}.peprc.local${NC} — personal settings: PEP_AUTHOR, DEFAULT_EDITOR, PEP_FRAMEWORK_SOURCE,
+                 PEP_ASK_URL, PEP_ASK_MODEL, PEP_ASK_KEY_ENV (gitignored)
 EOF
 }
 
@@ -2065,6 +2215,10 @@ main() {
         "stubs")
             shift
             show_stubs "$@"
+            ;;
+        "ask")
+            shift
+            ask_peps "$@"
             ;;
         "migrate")
             shift

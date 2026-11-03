@@ -3,7 +3,7 @@
 **ID:** PEP-PF-FWK-009  
 **Title:** update-tools refreshes both scripts  
 **Author:** Timo Vlot  
-**Status:** Draft  
+**Status:** Implemented  
 **Type:** Bug  
 **Priority:** Medium  
 **Created:** 2026-11-03  
@@ -63,13 +63,14 @@ the other platform.
 ### Phase 1: Both scripts and tests
 
 - Sibling step in `update_tools` and `Update-PepTools`; help text; CHANGELOG entry.
-- Built on the work MacBook by Claude Code, after PEP-PF-FWK-008 (Todoist,
-  2026-11-03).
+- Built 2026-11-03 on Timo's personal Mac by Claude Code, with PEP-PF-FWK-008.
+  Released in 2.3.
 
 ### Phase 2: Roll-out
 
 - One `update-tools` run per repo now refreshes both. The per-repo Todoist tasks for the
-  work repos already include a manual PowerShell step until this lands.
+  work repos already include a manual PowerShell step; it is only needed once, for
+  repos still on 2.2 (a 2.2 script can't refresh its sibling).
 
 ## Testing Strategy
 
@@ -102,3 +103,4 @@ the other platform.
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
+| 1.0 | 2026-11-03 | Timo Vlot | Implemented in both scripts (2.3); sibling tests in `tests/test-commit-msg-hook.sh` (55/55); checked live on this repo's own `tools/` |
