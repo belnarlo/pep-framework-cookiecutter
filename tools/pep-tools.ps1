@@ -1618,14 +1618,33 @@ function Invoke-GitClone {
 
 # ----------------------------------------------------------------------------
 # Refresh tools/pep-tools.sh from the same source as pep-tools.ps1, if this
-# repo has it (PEP-PF-FWK-009). Never adds it to a PowerShell-only repo. Backed
-# up first and restored if the copy fails or doesn't parse. $false on failure.
+# repo has it (PEP-PF-FWK-009). Only adds it to a PowerShell-only repo when
+# asked (update-tools --add-sh). Backed up first and restored if the copy fails
+# or doesn't parse. $false on failure.
 # ----------------------------------------------------------------------------
 function Sync-PepSiblingTools {
-    param([string]$SourceFile)
+    param([string]$SourceFile, [bool]$Add = $false)
 
     $dest = "tools/pep-tools.sh"
-    if (-not (Test-Path $dest)) { return $true }
+    if (-not (Test-Path $dest)) {
+        if (-not $Add) { return $true }
+        if (-not $SourceFile -or -not (Test-Path $SourceFile)) {
+            Write-PepLog ERROR "--add-sh needs a path or git source that contains pep-tools.sh"
+            return $false
+        }
+        Copy-Item $SourceFile $dest -Force
+        if (Get-Command bash -ErrorAction SilentlyContinue) {
+            & bash -n $dest *> $null
+            if ($LASTEXITCODE -ne 0) {
+                Remove-Item $dest -Force -ErrorAction SilentlyContinue
+                Write-PepLog ERROR "The new $dest doesn't parse; not added (pep-tools.ps1 was updated)"
+                return $false
+            }
+        }
+        if ($IsLinux -or $IsMacOS) { & chmod +x $dest }
+        Write-PepLog INFO "Added $dest (new file — git add it)"
+        return $true
+    }
     if (-not $SourceFile) {
         Write-PepLog WARN "Raw-file source: $dest was NOT refreshed — run 'bash $dest update-tools' too"
         return $true
@@ -1679,10 +1698,12 @@ function Update-PepTools {
 
     $source = $null
     $saveSource = $false
+    $addSibling = $false
     for ($i = 0; $i -lt $Arguments.Count; $i++) {
         switch ($Arguments[$i]) {
             "--source" { $source = $Arguments[$i + 1]; $i++ }
             "--save"   { $saveSource = $true }
+            "--add-sh" { $addSibling = $true }
             default    { Write-PepLog ERROR "Unknown option: $($Arguments[$i])"; exit 1 }
         }
     }
@@ -1777,7 +1798,7 @@ function Update-PepTools {
 
     # Keep the bash copy in step (PEP-PF-FWK-009). A failure there has already
     # been rolled back; pep-tools.ps1 itself stays updated.
-    $siblingOk = Sync-PepSiblingTools -SourceFile $siblingSrc
+    $siblingOk = Sync-PepSiblingTools -SourceFile $siblingSrc -Add $addSibling
     if ($siblingStage) { Remove-Item $siblingStage -Force -ErrorAction SilentlyContinue }
     if (-not $siblingOk) { exit 1 }
 }
@@ -2036,7 +2057,7 @@ function Show-PepHelp {
     Write-Host "  claude-skills <on|off|status>           Install/remove/report Claude Code skills (.claude/skills/)"
     Write-Host "                                          — the only way to bootstrap skills into a project that"
     Write-Host "                                          predates this feature or was generated with it off"
-    Write-Host "  update-tools [--source <path|git|url>] Update pep-tools.ps1 from source (defaults to the"
+    Write-Host "  update-tools [--source <path|git|url>] [--add-sh] Update pep-tools.ps1 from source (defaults to the"
     Write-Host "                                          framework's git repo if none is configured), and"
     Write-Host "                                          pep-tools.sh too if this repo has it"
     Write-Host "  update-templates [--source <path|git>] Update PEP/BLOG templates from source (same default)"

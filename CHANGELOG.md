@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
+
+- `update-tools --add-ps1` (bash) / `--add-sh` (PowerShell) (PEP-PF-FWK-011):
+  also create the sibling script in a repo that only has one. Opt-in; without
+  the flag a missing sibling is still never added. Needs a git or local-path
+  source; the new file is parse-checked and left unstaged.
+
 ## 2.3 — 2026-11-03
 
 ### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)

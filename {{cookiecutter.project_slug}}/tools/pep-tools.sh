@@ -1727,11 +1727,13 @@ clone_git_source() {
 update_tools() {
     local source=""
     local save_source=false
+    local add_sibling=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --source) source="$2"; shift 2 ;;
-            --save)   save_source=true; shift ;;
+            --source)  source="$2"; shift 2 ;;
+            --save)    save_source=true; shift ;;
+            --add-ps1) add_sibling=true; shift ;;
             *) log "ERROR" "Unknown option: $1"; exit 1 ;;
         esac
     done
@@ -1818,7 +1820,7 @@ update_tools() {
     # Keep the PowerShell copy in step (PEP-PF-FWK-009). A failure there has
     # already been rolled back; pep-tools.sh itself stays updated.
     local sibling_status=0
-    sync_sibling_tools "$sibling_dir" || sibling_status=1
+    sync_sibling_tools "$sibling_dir" "$add_sibling" || sibling_status=1
 
     # Exit immediately — bash reads scripts in chunks from disk; continuing after
     # replacing this file causes it to read garbage at the old byte offset.
@@ -1826,12 +1828,30 @@ update_tools() {
 }
 
 # Refresh tools/pep-tools.ps1 from the same source as pep-tools.sh, if this
-# repo has it (PEP-PF-FWK-009). Never adds it to a bash-only repo. Backed up
-# first and restored if the copy fails or doesn't parse. Returns 1 on failure.
+# repo has it (PEP-PF-FWK-009). Only adds it to a bash-only repo when asked
+# (update-tools --add-ps1). Backed up first and restored if the copy fails or
+# doesn't parse. Returns 1 on failure.
 sync_sibling_tools() {
     local src_dir="$1"
+    local add="${2:-false}"
     local dest="tools/pep-tools.ps1"
-    [ -f "$dest" ] || return 0
+    if [ ! -f "$dest" ]; then
+        $add || return 0
+        if [ -z "$src_dir" ] || [ ! -f "$src_dir/pep-tools.ps1" ]; then
+            log "ERROR" "--add-ps1 needs a path or git source that contains pep-tools.ps1"
+            return 1
+        fi
+        cp "$src_dir/pep-tools.ps1" "$dest"
+        if command -v pwsh >/dev/null 2>&1 && ! PEP_PARSE_FILE="$dest" pwsh -NoProfile -NonInteractive -Command \
+            '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $env:PEP_PARSE_FILE).Path, [ref]$null, [ref]$e); if ($e.Count -gt 0) { exit 1 }' \
+            >/dev/null 2>&1; then
+            rm -f "$dest"
+            log "ERROR" "The new $dest doesn't parse; not added (pep-tools.sh was updated)"
+            return 1
+        fi
+        log "INFO" "Added $dest (new file — git add it)"
+        return 0
+    fi
 
     if [ -z "$src_dir" ]; then
         log "WARN" "Raw-file source: $dest was NOT refreshed — run 'pwsh $dest update-tools' too"
@@ -2121,7 +2141,7 @@ ${GREEN}Framework commands:${NC}
   ${YELLOW}claude-skills${NC} <on|off|status>           Install/remove/report Claude Code skills (.claude/skills/)
                                                — the only way to bootstrap skills into a project that
                                                predates this feature or was generated with it off
-  ${YELLOW}update-tools${NC} [--source <path|git|url>]  Update pep-tools.sh from source (defaults to the
+  ${YELLOW}update-tools${NC} [--source <path|git|url>] [--add-ps1]  Update pep-tools.sh from source (defaults to the
                                                framework's git repo if none is configured), and
                                                pep-tools.ps1 too if this repo has it
   ${YELLOW}update-templates${NC} [--source <path|git>]  Update PEP/BLOG templates from source (same default)

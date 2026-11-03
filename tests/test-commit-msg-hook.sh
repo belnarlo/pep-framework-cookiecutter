@@ -263,6 +263,27 @@ expect_failure "[$CLI] update-tools reports a sibling that doesn't parse" \
 expect_success "[$CLI] ...keeps the old sibling and still updates $own, no backups" \
     bash -c 'cmp -s "$1" "tools/$3" && cmp -s "$2/$4" "tools/$4" && ! ls tools/*.bak >/dev/null 2>&1' _ "$WORK/sib-before-$CLI" "$HALF" "$sib" "$own"
 
+# update-tools --add-ps1 / --add-sh creates the missing sibling (PEP-PF-FWK-011)
+echo "# --- update-tools --add-sibling via $CLI"
+if [ "$CLI" = "ps1" ]; then addflag=--add-sh; else addflag=--add-ps1; fi
+new_repo "$WORK/add-sibling-$CLI"
+cp "${TOOLS_DIR}/$own" tools/
+pep update-tools --source "$SRC_TOOLS" $addflag >/dev/null 2>&1
+expect_success "[$CLI] update-tools $addflag adds the missing $sib"     cmp -s "$SRC_TOOLS/$sib" "tools/$sib"
+expect_success "[$CLI] ...with no backups left"     bash -c '! ls tools/*.bak >/dev/null 2>&1'
+
+new_repo "$WORK/add-sibling-broken-$CLI"
+cp "${TOOLS_DIR}/$own" tools/
+ABROKEN="$WORK/add-broken-$CLI"
+mkdir -p "$ABROKEN/git-hooks"
+cp "$SRC_TOOLS/$own" "$ABROKEN/"
+cp "$HOOK_SRC" "$ABROKEN/git-hooks/commit-msg"
+if [ "$sib" = "pep-tools.ps1" ]; then printf 'function { (\n' > "$ABROKEN/$sib"; else printf 'if then fi (\n' > "$ABROKEN/$sib"; fi
+expect_failure "[$CLI] update-tools $addflag reports a sibling that doesn't parse" \
+    pep update-tools --source "$ABROKEN" $addflag
+expect_success "[$CLI] ...and doesn't leave $sib behind" \
+    test ! -e "tools/$sib"
+
 # update-templates keeps the repo's ai-block choice (or a customised template)
 echo "# --- update-templates via $CLI"
 new_repo "$WORK/templates-$CLI"
