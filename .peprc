@@ -1,0 +1,42 @@
+# PEP Framework Configuration — project-level settings (committed, shared with the team)
+# Personal settings (author, editor, etc.) belong in .peprc.local (gitignored).
+
+# Project information
+PROJECT_NAME="pep-framework-cookiecutter"
+
+# PEP identifier codes — combined to build IDs like PEP-PROJECT_CODE-REPO_CODE-001
+# Leave blank to fall back to the default "PEP" prefix (e.g. PEP-001)
+# For ADO: PROJECT_CODE = short ADO project code, REPO_CODE = short repo code
+PROJECT_CODE="PF"
+REPO_CODE="FWK"
+
+# Enable/disable the Blogs (Build Logs) feature
+# Set to "n" for work repos where you don't need implementation logs
+ENABLE_BLOGS="y"
+
+# Directory configuration (relative to project root)
+# Uncomment and modify if you want different paths
+# PEP_DIR="docs/peps"
+# BLOG_DIR="docs/blogs"
+# TEMPLATE_DIR="docs/templates"
+
+# Integration settings for monitoring
+ZABBIX_HOST=""
+GRAFANA_URL=""
+
+# Git integration
+# Set to true to require all commits reference a PEP (strict mode)
+REQUIRE_PEP_REFERENCE=false
+
+# Branching: "true" gives each PEP its own feature branch (new-branch creates it).
+# Set to "false" to stay on the current branch; new-branch then only validates
+# the PEP and prints the commit command.
+# BRANCH_PER_PEP="true"
+
+# Notification settings (optional)
+SLACK_WEBHOOK=""
+EMAIL_NOTIFICATIONS="false"
+
+# Debug mode - set to true for verbose output
+DEBUG="false"
+BRANCH_PER_PEP=false
