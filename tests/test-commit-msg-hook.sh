@@ -322,6 +322,83 @@ expect_success "[$CLI] ...and no $sib appears" \
     test ! -e "tools/$sib"
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
+# doctor checks config and tool health (PEP-PF-FWK-013)
+echo "# --- doctor via $CLI"
+doctor_has() { # <description> <egrep pattern> <doctor args...>
+    local desc="$1" pat="$2" o; shift 2
+    o=$(pep doctor "$@" 2>&1 || true)
+    if echo "$o" | grep -qE "$pat"; then ok "$desc"; else nok "$desc"; echo "$o" | sed 's/^/       /'; fi
+}
+doctor_lacks() { # <description> <egrep pattern> <doctor args...>
+    local desc="$1" pat="$2" o; shift 2
+    o=$(pep doctor "$@" 2>&1 || true)
+    if echo "$o" | grep -qE "$pat"; then nok "$desc"; echo "$o" | sed 's/^/       /'; else ok "$desc"; fi
+}
+doctor_repo() { # fresh repo with both scripts, the hook installed, .peprc.local ignored
+    new_repo "$1"
+    cp "${TOOLS_DIR}/pep-tools.sh" "${TOOLS_DIR}/pep-tools.ps1" tools/
+    install_hook
+    printf '.peprc.local\n' > .gitignore
+    git add -A && git commit -q -m "chore: doctor fixture"
+}
+
+doctor_repo "$WORK/doctor-clean-$CLI"
+expect_success "[$CLI] doctor passes on a healthy repo" pep doctor --offline
+doctor_has "[$CLI] ...and reports the scripts as matching" "both at" --offline
+doctor_lacks "[$CLI] doctor --quiet prints nothing when healthy" "." --offline --quiet
+
+doctor_repo "$WORK/doctor-raw-$CLI"
+printf 'PEP_FRAMEWORK_SOURCE="%s"\n' "$RAW" >> .peprc
+doctor_has "[$CLI] doctor warns about a raw-file source and names the fix" "raw-file URL.*update-tools" --offline
+expect_success "[$CLI] ...a warning is not a failure" pep doctor --offline
+
+doctor_repo "$WORK/doctor-path-$CLI"
+printf 'PEP_FRAMEWORK_SOURCE="%s"\n' "$WORK/does-not-exist" > .peprc.local
+expect_failure "[$CLI] doctor fails on a source path that doesn't exist" pep doctor --offline
+doctor_has "[$CLI] ...and says so" "doesn't exist" --offline
+
+doctor_repo "$WORK/doctor-typo-$CLI"
+printf 'PEP_FRAMEWORK_SORUCE="x"\nproject_code="PS"\n' >> .peprc
+doctor_has "[$CLI] doctor flags an unknown setting" "unknown setting PEP_FRAMEWORK_SORUCE" --offline
+doctor_has "[$CLI] ...and a wrong-case one with the right name" "did you mean PROJECT_CODE" --offline
+
+doctor_repo "$WORK/doctor-secret-$CLI"
+printf 'SLACK_WEBHOOK="https://hooks.example.invalid/abc"\n' >> .peprc
+expect_failure "[$CLI] doctor fails on a secret in the committed .peprc" pep doctor --offline
+doctor_repo "$WORK/doctor-envname-$CLI"
+printf 'PEP_ASK_KEY_ENV="LITELLM_MASTER_KEY"\n' > .peprc.local
+expect_success "[$CLI] ...but a key *name* (PEP_ASK_KEY_ENV) is fine in .peprc.local" pep doctor --offline
+printf 'PEP_ASK_URL="https://x.invalid/v1"\n' >> .peprc
+doctor_has "[$CLI] doctor warns that PEP_ASK_* in .peprc is ignored" "PEP_ASK_\* is ignored" --offline
+
+doctor_repo "$WORK/doctor-tracked-$CLI"
+printf 'PEP_AUTHOR="T"\n' > .peprc.local
+git add -f .peprc.local && git commit -q -m "oops"
+expect_failure "[$CLI] doctor fails when .peprc.local is tracked by git" pep doctor --offline
+doctor_repo "$WORK/doctor-notignored-$CLI"
+printf 'PEP_AUTHOR="T"\n' > .peprc.local
+: > .gitignore
+doctor_has "[$CLI] doctor warns when .peprc.local isn't gitignored" "isn't gitignored" --offline
+
+doctor_repo "$WORK/doctor-drift-$CLI"
+sed -i.bak '1,10s/^Version: .*/Version: 1.0/' tools/pep-tools.ps1 && rm -f tools/pep-tools.ps1.bak
+doctor_has "[$CLI] doctor warns when the two scripts are at different versions" "pep-tools.ps1 is 1.0" --offline
+
+doctor_repo "$WORK/doctor-hook-$CLI"
+rm -f .git/hooks/commit-msg
+doctor_has "[$CLI] doctor warns when the commit-msg hook isn't installed" "hook isn't installed" --offline
+install_hook
+printf '# local edit\n' >> .git/hooks/commit-msg
+doctor_has "[$CLI] ...and when the installed hook differs" "differs" --offline
+
+doctor_repo "$WORK/doctor-online-$CLI"
+printf '#!/bin/bash\n# Version: 9.9\n' > "$WORK/latest-$CLI.sh"
+export PEP_DOCTOR_LATEST_URL="file://$WORK/latest-$CLI.sh"
+doctor_has "[$CLI] doctor warns when the framework is at a newer version" "framework is at 9.9" 
+printf '#!/bin/bash\n# Version: 2.3\n' > "$WORK/latest-$CLI.sh"
+doctor_has "[$CLI] ...and is happy when it matches" "current version" 
+unset PEP_DOCTOR_LATEST_URL
+
 # update-templates keeps the repo's ai-block choice (or a customised template)
 echo "# --- update-templates via $CLI"
 new_repo "$WORK/templates-$CLI"

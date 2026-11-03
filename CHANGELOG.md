@@ -12,6 +12,11 @@
 
 ### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
 
+- `doctor [--offline] [--quiet]` (PEP-PF-FWK-013): checks `.peprc` and
+  `.peprc.local` (framework source, unknown settings, secrets, gitignore),
+  that both scripts match, the commit hook, and the version against the
+  framework's `main`. Exit 1 on a FAIL. `update-tools` now runs it quietly
+  afterwards and shows only problems.
 - `update-tools --add-ps1` (bash) / `--add-sh` (PowerShell) (PEP-PF-FWK-011):
   also create the sibling script in a repo that only has one. Opt-in; without
   the flag a missing sibling is still never added. Needs a git or local-path

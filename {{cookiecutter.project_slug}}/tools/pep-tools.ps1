@@ -1841,7 +1841,203 @@ function Update-PepTools {
     # been rolled back; pep-tools.ps1 itself stays updated.
     $siblingOk = Sync-PepSiblingTools -SourceFile $siblingSrc -Add $addSibling
     if ($siblingStage) { Remove-Item $siblingStage -Force -ErrorAction SilentlyContinue }
+    # Run the new script's doctor as a child process and show only problems
+    # (PEP-PF-FWK-013). Never fails the update.
+    & (Get-Process -Id $PID).Path -NoProfile -File $dest doctor --quiet --offline
     if (-not $siblingOk) { exit 1 }
+}
+
+# ----------------------------------------------------------------------------
+# doctor [--offline] [--quiet] — check config and tool health (PEP-PF-FWK-013)
+# OK/INFO/WARN/FAIL per check, each with the fix. Exit 1 if anything FAILs.
+# --offline skips the network checks; --quiet prints only WARN/FAIL lines.
+# ----------------------------------------------------------------------------
+$script:DoctorKnownKeys = @(
+    "PROJECT_NAME","PROJECT_CODE","REPO_CODE","ENABLE_BLOGS","PEP_DIR","BLOG_DIR","TEMPLATE_DIR",
+    "ZABBIX_HOST","GRAFANA_URL","REQUIRE_PEP_REFERENCE","BRANCH_PER_PEP","SLACK_WEBHOOK",
+    "EMAIL_NOTIFICATIONS","DEBUG","PEP_AUTHOR","DEFAULT_EDITOR","AUTO_OPEN_EDITOR",
+    "PEP_FRAMEWORK_SOURCE","PEP_ASK_URL","PEP_ASK_MODEL","PEP_ASK_KEY_ENV")
+$script:DoctorLatestUrl = "https://raw.githubusercontent.com/belnarlo/pep-framework-cookiecutter/main/%7B%7Bcookiecutter.project_slug%7D%7D/tools/pep-tools.sh"
+$script:DocOk = 0; $script:DocInfo = 0; $script:DocWarn = 0; $script:DocFail = 0; $script:DocQuiet = $false
+
+function Write-DoctorLine {
+    param([string]$Level, [string]$Message)
+    switch ($Level) {
+        "OK"   { $script:DocOk++;   if (-not $script:DocQuiet) { Write-Host "[OK]   $Message" -ForegroundColor Green } }
+        "INFO" { $script:DocInfo++; if (-not $script:DocQuiet) { Write-Host "[INFO] $Message" -ForegroundColor Blue } }
+        "WARN" { $script:DocWarn++; Write-Host "[WARN] $Message" -ForegroundColor Yellow }
+        "FAIL" { $script:DocFail++; Write-Host "[FAIL] $Message" -ForegroundColor Red }
+    }
+}
+
+# Value of KEY in a config file (last assignment wins), quotes stripped.
+function Get-DoctorConfValue {
+    param([string]$File, [string]$Key)
+    $val = $null
+    foreach ($l in Get-Content -Path $File) {
+        if ($l -match "^$Key=(.*)$") { $val = $matches[1].Trim() }
+    }
+    if ($null -eq $val) { return $null }
+    if ($val -match '^"(.*)"$') { $val = $matches[1] }
+    elseif ($val -match "^'(.*)'$") { $val = $matches[1] }
+    return $val
+}
+
+function Test-DoctorSourceValue {
+    param([string]$Label, [string]$Val)
+    if (-not $Val) {
+        Write-DoctorLine WARN "${Label}: PEP_FRAMEWORK_SOURCE is empty — remove the line or set a git URL"
+    } elseif (Test-GitSource $Val) {
+        if ($script:DocOffline) {
+            Write-DoctorLine OK "${Label}: source is a git URL ($Val)"
+        } else {
+            & git ls-remote --exit-code $Val HEAD *> $null
+            if ($LASTEXITCODE -eq 0) { Write-DoctorLine OK "${Label}: source is a reachable git URL" }
+            else { Write-DoctorLine WARN "${Label}: can't reach $Val (network, or access to the repo)" }
+        }
+    } elseif ($Val -match '^https?://') {
+        $derived = Get-GitUrlFromRawUrl $Val
+        if ($derived) {
+            Write-DoctorLine WARN "${Label}: PEP_FRAMEWORK_SOURCE is a raw-file URL — run 'update-tools' (it rewrites it) or set it to $derived"
+        } else {
+            Write-DoctorLine WARN "${Label}: PEP_FRAMEWORK_SOURCE is a single-file URL; update-tools --add-sh and update-templates need a git URL"
+        }
+    } elseif (Test-Path $Val -PathType Container) {
+        if (Test-Path (Join-Path $Val "pep-tools.ps1")) { Write-DoctorLine OK "${Label}: source path has pep-tools.ps1" }
+        else { Write-DoctorLine FAIL "${Label}: PEP_FRAMEWORK_SOURCE=$Val has no pep-tools.ps1 — point it at the framework's tools directory or a git URL" }
+    } elseif (Test-Path $Val -PathType Leaf) {
+        Write-DoctorLine OK "${Label}: source is a file ($Val)"
+    } else {
+        Write-DoctorLine FAIL "${Label}: PEP_FRAMEWORK_SOURCE=$Val doesn't exist — fix the path or use a git URL"
+    }
+}
+
+function Invoke-PepDoctor {
+    param([string[]]$Arguments)
+    $script:DocOffline = $false; $script:DocQuiet = $false
+    $script:DocOk = 0; $script:DocInfo = 0; $script:DocWarn = 0; $script:DocFail = 0
+    foreach ($a in $Arguments) {
+        switch ($a) {
+            "--offline" { $script:DocOffline = $true }
+            "--quiet"   { $script:DocQuiet = $true }
+            default     { Write-PepLog ERROR "Unknown option: $a"; exit 1 }
+        }
+    }
+
+    $local = "$($script:CONFIG_FILE).local"
+    $files = @($script:CONFIG_FILE, $local) | Where-Object { Test-Path $_ }
+
+    # 1. Framework source, per file (the effective value is the last one set)
+    $found = $false
+    foreach ($f in @($local, $script:CONFIG_FILE)) {
+        if (-not (Test-Path $f)) { continue }
+        if (-not (Select-String -Path $f -Pattern '^PEP_FRAMEWORK_SOURCE=' -Quiet)) { continue }
+        $found = $true
+        Test-DoctorSourceValue -Label $f -Val (Get-DoctorConfValue -File $f -Key "PEP_FRAMEWORK_SOURCE")
+    }
+    if (-not $found) { Write-DoctorLine OK "no PEP_FRAMEWORK_SOURCE set — update commands use the default git repo" }
+
+    # 2. Unknown keys (typos are silently ignored otherwise)
+    foreach ($f in $files) {
+        $n = 0
+        foreach ($l in Get-Content -Path $f) {
+            $n++
+            if ($l -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=') { continue }
+            $key = $matches[1]
+            if ($script:DoctorKnownKeys -ccontains $key) { continue }
+            $hint = ""
+            foreach ($k in $script:DoctorKnownKeys) { if ($k.ToLower() -eq $key.ToLower()) { $hint = " — did you mean ${k}?" } }
+            Write-DoctorLine WARN "${f}:${n}: unknown setting $key$hint"
+        }
+    }
+
+    # 3. Secrets and personal settings in the wrong place
+    foreach ($f in $files) {
+        foreach ($l in Get-Content -Path $f) {
+            if ($l -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=') { continue }
+            $key = $matches[1]
+            if ($key -like '*_ENV') { continue }
+            $val = Get-DoctorConfValue -File $f -Key $key
+            if (-not $val) { continue }
+            if ($key -match 'KEY|TOKEN|SECRET|PASSWORD|PASSWD|WEBHOOK') {
+                if ($f -eq $script:CONFIG_FILE) {
+                    Write-DoctorLine FAIL "${f}: $key looks like a secret in a committed file — remove it and keep it in Vault"
+                } else {
+                    Write-DoctorLine WARN "${f}: $key looks like a secret; keep secrets in Vault, not in files"
+                }
+            }
+        }
+    }
+    if ((Test-Path $script:CONFIG_FILE) -and (Select-String -Path $script:CONFIG_FILE -Pattern '^PEP_ASK_' -Quiet)) {
+        Write-DoctorLine WARN "$($script:CONFIG_FILE): PEP_ASK_* is ignored here; put it in $local"
+    }
+    & git rev-parse --git-dir *> $null
+    $inGit = ($LASTEXITCODE -eq 0)
+    if ((Test-Path $local) -and $inGit) {
+        & git ls-files --error-unmatch $local *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-DoctorLine FAIL "$local is tracked by git — 'git rm --cached $local' and gitignore it"
+        } else {
+            & git check-ignore -q $local *> $null
+            if ($LASTEXITCODE -ne 0) { Write-DoctorLine WARN "$local isn't gitignored — add it to .gitignore" }
+            else { Write-DoctorLine OK "$local is gitignored" }
+        }
+    }
+
+    # 4. The two scripts
+    $shVer = $null; $psVer = $null
+    if (Test-Path "tools/pep-tools.sh") {
+        $m = Get-Content "tools/pep-tools.sh" -TotalCount 10 | Select-String -Pattern '^# Version:\s*(.*)$' | Select-Object -First 1
+        if ($m) { $shVer = $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    if (Test-Path "tools/pep-tools.ps1") {
+        $m = Get-Content "tools/pep-tools.ps1" -TotalCount 10 | Select-String -Pattern '^Version:\s*(.*)$' | Select-Object -First 1
+        if ($m) { $psVer = $m.Matches[0].Groups[1].Value.Trim() }
+    }
+    if ($shVer -and $psVer) {
+        if ($shVer -eq $psVer) { Write-DoctorLine OK "pep-tools.sh and pep-tools.ps1 are both at $shVer" }
+        else { Write-DoctorLine WARN "pep-tools.sh is $shVer but pep-tools.ps1 is $psVer — run 'update-tools' (either shell)" }
+    } elseif ($shVer) {
+        Write-DoctorLine INFO "only pep-tools.sh is in this repo (fine; '.\tools\pep-tools.ps1 update-tools --add-sh' adds it)"
+    } elseif ($psVer) {
+        Write-DoctorLine INFO "only pep-tools.ps1 is in this repo (fine; 'update-tools --add-ps1' from bash adds the PowerShell version)"
+    }
+
+    # 5. Commit hook
+    if ($inGit) {
+        $hookSrc = "tools/git-hooks/commit-msg"
+        $hookDest = (& git rev-parse --git-path hooks/commit-msg 2>$null)
+        if (-not (Test-Path $hookSrc)) {
+            Write-DoctorLine INFO "no $hookSrc in this repo (commit-msg hook not in use)"
+        } elseif (-not (Test-Path $hookDest)) {
+            Write-DoctorLine WARN "the commit-msg hook isn't installed — run 'update-hooks'"
+        } elseif ((Get-FileHash $hookSrc).Hash -ne (Get-FileHash $hookDest).Hash) {
+            Write-DoctorLine WARN "the installed commit-msg hook differs from $hookSrc — run 'update-hooks'"
+        } else {
+            Write-DoctorLine OK "commit-msg hook is installed and current"
+        }
+    }
+
+    # 6. Version against the framework's main branch
+    if ((-not $script:DocOffline) -and $psVer) {
+        $url = if ($env:PEP_DOCTOR_LATEST_URL) { $env:PEP_DOCTOR_LATEST_URL } else { $script:DoctorLatestUrl }
+        $latest = $null
+        try {
+            if ($url -match '^file://') { $text = Get-Content -Raw -Path ([uri]$url).LocalPath }
+            else { $text = (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5).Content }
+            if ($text -is [byte[]]) { $text = [System.Text.Encoding]::UTF8.GetString($text) }
+            $m = ($text -split "`n" | Select-Object -First 10) | Select-String -Pattern '^# Version:\s*(.*)$' | Select-Object -First 1
+            if ($m) { $latest = $m.Matches[0].Groups[1].Value.Trim() }
+        } catch { }
+        if (-not $latest) { Write-DoctorLine INFO "couldn't check the framework's latest version (offline?)" }
+        elseif ($latest -eq $psVer) { Write-DoctorLine OK "tools are at the framework's current version ($psVer)" }
+        else { Write-DoctorLine WARN "this repo has tools $psVer; the framework is at $latest — run 'update-tools'" }
+    }
+
+    if ((-not $script:DocQuiet) -or ($script:DocWarn + $script:DocFail) -gt 0) {
+        Write-Host "doctor: $($script:DocOk) ok, $($script:DocInfo) info, $($script:DocWarn) warn, $($script:DocFail) fail"
+    }
+    if ($script:DocFail -gt 0) { exit 1 }
 }
 
 # ----------------------------------------------------------------------------
@@ -2102,6 +2298,8 @@ function Show-PepHelp {
     Write-Host "                                          framework's git repo if none is configured), and"
     Write-Host "                                          pep-tools.sh too if this repo has it"
     Write-Host "  update-templates [--source <path|git>] Update PEP/BLOG templates from source (same default)"
+    Write-Host "  doctor [--offline] [--quiet]            Check .peprc/.peprc.local, the source, both scripts and"
+    Write-Host "                                          the hook; exit 1 on a FAIL (update-tools runs it quietly)"
     Write-Host "  update-hooks [--source <path|git>]     Refresh tools/git-hooks/commit-msg from source AND"
     Write-Host "                                         reinstall it into .git/hooks (update-tools does this too)"
     Write-Host "  help                                    Show this help message"
@@ -2167,6 +2365,7 @@ switch ($Command) {
     "update-tools"     { Update-PepTools -Arguments $Rest }
     "update-templates" { Update-PepTemplates -Arguments $Rest }
     "update-hooks"     { Update-PepHooks -Arguments $Rest }
+    "doctor"           { Invoke-PepDoctor -Arguments $Rest }
     "help"             { Show-PepHelp }
     "-h"               { Show-PepHelp }
     "--help"           { Show-PepHelp }

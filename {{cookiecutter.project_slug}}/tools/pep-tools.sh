@@ -1856,6 +1856,10 @@ update_tools() {
     local sibling_status=0
     sync_sibling_tools "$sibling_dir" "$add_sibling" || sibling_status=1
 
+    # Run the new script's doctor as a child process (this process still holds
+    # the old code) and show only problems (PEP-PF-FWK-013). Never fails the update.
+    bash "$dest" doctor --quiet --offline || true
+
     # Exit immediately — bash reads scripts in chunks from disk; continuing after
     # replacing this file causes it to read garbage at the old byte offset.
     exit "$sibling_status"
@@ -2126,6 +2130,187 @@ update_hooks() {
     fi
 }
 
+# ----------------------------------------------------------------------------
+# doctor [--offline] [--quiet] — check config and tool health (PEP-PF-FWK-013)
+# OK/INFO/WARN/FAIL per check, each with the fix. Exit 1 if anything FAILs.
+# --offline skips the network checks; --quiet prints only WARN/FAIL lines.
+# ----------------------------------------------------------------------------
+DOCTOR_KNOWN_KEYS=" PROJECT_NAME PROJECT_CODE REPO_CODE ENABLE_BLOGS PEP_DIR BLOG_DIR TEMPLATE_DIR ZABBIX_HOST GRAFANA_URL REQUIRE_PEP_REFERENCE BRANCH_PER_PEP SLACK_WEBHOOK EMAIL_NOTIFICATIONS DEBUG PEP_AUTHOR DEFAULT_EDITOR AUTO_OPEN_EDITOR PEP_FRAMEWORK_SOURCE PEP_ASK_URL PEP_ASK_MODEL PEP_ASK_KEY_ENV "
+DOCTOR_LATEST_URL="https://raw.githubusercontent.com/belnarlo/pep-framework-cookiecutter/main/%7B%7Bcookiecutter.project_slug%7D%7D/tools/pep-tools.sh"
+_DOC_OK=0; _DOC_INFO=0; _DOC_WARN=0; _DOC_FAIL=0; _DOC_QUIET=false
+
+doctor_ok()   { _DOC_OK=$((_DOC_OK + 1));     $_DOC_QUIET || echo "${GREEN}[OK]${NC}   $*"; }
+doctor_info() { _DOC_INFO=$((_DOC_INFO + 1)); $_DOC_QUIET || echo "${BLUE}[INFO]${NC} $*"; }
+doctor_warn() { _DOC_WARN=$((_DOC_WARN + 1)); echo "${YELLOW}[WARN]${NC} $*"; }
+doctor_fail() { _DOC_FAIL=$((_DOC_FAIL + 1)); echo "${RED}[FAIL]${NC} $*"; }
+
+# Value of KEY in a config file (last assignment wins), quotes stripped.
+doctor_conf_value() {
+    local f="$1" key="$2" v
+    v=$(grep "^${key}=" "$f" 2>/dev/null | tail -1 | cut -d= -f2-)
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    printf '%s' "$v"
+}
+
+doctor_check_source_value() {
+    local label="$1" val="$2" derived
+    if [ -z "$val" ]; then
+        doctor_warn "$label: PEP_FRAMEWORK_SOURCE is empty — remove the line or set a git URL"
+    elif is_git_source "$val"; then
+        if $_DOC_OFFLINE; then
+            doctor_ok "$label: source is a git URL ($val)"
+        elif git ls-remote --exit-code "$val" HEAD >/dev/null 2>&1; then
+            doctor_ok "$label: source is a reachable git URL"
+        else
+            doctor_warn "$label: can't reach $val (network, or access to the repo)"
+        fi
+    elif echo "$val" | grep -qE '^https?://'; then
+        derived=$(derive_git_url_from_raw "$val")
+        if [ -n "$derived" ]; then
+            doctor_warn "$label: PEP_FRAMEWORK_SOURCE is a raw-file URL — run 'update-tools' (it rewrites it) or set it to $derived"
+        else
+            doctor_warn "$label: PEP_FRAMEWORK_SOURCE is a single-file URL; update-tools --add-ps1 and update-templates need a git URL"
+        fi
+    elif [ -d "$val" ]; then
+        if [ -f "$val/pep-tools.sh" ]; then doctor_ok "$label: source path has pep-tools.sh"
+        else doctor_fail "$label: PEP_FRAMEWORK_SOURCE=$val has no pep-tools.sh — point it at the framework's tools/ directory or a git URL"; fi
+    elif [ -f "$val" ]; then
+        doctor_ok "$label: source is a file ($val)"
+    else
+        doctor_fail "$label: PEP_FRAMEWORK_SOURCE=$val doesn't exist — fix the path or use a git URL"
+    fi
+}
+
+doctor() {
+    _DOC_OFFLINE=false; _DOC_QUIET=false
+    _DOC_OK=0; _DOC_INFO=0; _DOC_WARN=0; _DOC_FAIL=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --offline) _DOC_OFFLINE=true; shift ;;
+            --quiet)   _DOC_QUIET=true; shift ;;
+            *) log "ERROR" "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    local f key val line n found
+
+    # 1. Framework source, per file (the effective value is the last one set)
+    found=false
+    for f in "${CONFIG_FILE}.local" "$CONFIG_FILE"; do
+        [ -f "$f" ] || continue
+        grep -q '^PEP_FRAMEWORK_SOURCE=' "$f" || continue
+        found=true
+        doctor_check_source_value "$f" "$(doctor_conf_value "$f" PEP_FRAMEWORK_SOURCE)"
+    done
+    if ! $found; then
+        if [ -n "${PEP_FRAMEWORK_SOURCE:-}" ]; then
+            doctor_check_source_value "environment" "$PEP_FRAMEWORK_SOURCE"
+        else
+            doctor_ok "no PEP_FRAMEWORK_SOURCE set — update commands use the default git repo"
+        fi
+    fi
+
+    # 2. Unknown keys (typos are silently ignored otherwise)
+    for f in "$CONFIG_FILE" "${CONFIG_FILE}.local"; do
+        [ -f "$f" ] || continue
+        n=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            n=$((n + 1))
+            case "$line" in
+                [A-Za-z_]*=*) key="${line%%=*}" ;;
+                *) continue ;;
+            esac
+            case "$DOCTOR_KNOWN_KEYS" in
+                *" $key "*) ;;
+                *)
+                    local hint=""
+                    for k in $DOCTOR_KNOWN_KEYS; do
+                        [ "$(echo "$k" | tr '[:upper:]' '[:lower:]')" = "$(echo "$key" | tr '[:upper:]' '[:lower:]')" ] && hint=" — did you mean $k?"
+                    done
+                    doctor_warn "$f:$n: unknown setting $key$hint"
+                    ;;
+            esac
+        done < "$f"
+    done
+
+    # 3. Secrets and personal settings in the wrong place
+    for f in "$CONFIG_FILE" "${CONFIG_FILE}.local"; do
+        [ -f "$f" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in [A-Za-z_]*=*) ;; *) continue ;; esac
+            key="${line%%=*}"
+            val=$(doctor_conf_value "$f" "$key")
+            [ -n "$val" ] || continue
+            case "$key" in *_ENV) continue ;; esac
+            if echo "$key" | grep -qE 'KEY|TOKEN|SECRET|PASSWORD|PASSWD|WEBHOOK'; then
+                if [ "$f" = "$CONFIG_FILE" ]; then
+                    doctor_fail "$f: $key looks like a secret in a committed file — remove it and keep it in Vault"
+                else
+                    doctor_warn "$f: $key looks like a secret; keep secrets in Vault, not in files"
+                fi
+            fi
+        done < "$f"
+    done
+    if [ -f "$CONFIG_FILE" ] && grep -q '^PEP_ASK_' "$CONFIG_FILE"; then
+        doctor_warn "$CONFIG_FILE: PEP_ASK_* is ignored here; put it in ${CONFIG_FILE}.local"
+    fi
+    if [ -f "${CONFIG_FILE}.local" ] && git rev-parse --git-dir >/dev/null 2>&1; then
+        if git ls-files --error-unmatch "${CONFIG_FILE}.local" >/dev/null 2>&1; then
+            doctor_fail "${CONFIG_FILE}.local is tracked by git — 'git rm --cached ${CONFIG_FILE}.local' and gitignore it"
+        elif ! git check-ignore -q "${CONFIG_FILE}.local" 2>/dev/null; then
+            doctor_warn "${CONFIG_FILE}.local isn't gitignored — add it to .gitignore"
+        else
+            doctor_ok "${CONFIG_FILE}.local is gitignored"
+        fi
+    fi
+
+    # 4. The two scripts
+    local sh_ver="" ps_ver=""
+    [ -f tools/pep-tools.sh ] && sh_ver=$(sed -n '1,10s/^# Version: *//p' tools/pep-tools.sh | head -1)
+    [ -f tools/pep-tools.ps1 ] && ps_ver=$(sed -n '1,10s/^Version: *//p' tools/pep-tools.ps1 | head -1)
+    if [ -n "$sh_ver" ] && [ -n "$ps_ver" ]; then
+        if [ "$sh_ver" = "$ps_ver" ]; then doctor_ok "pep-tools.sh and pep-tools.ps1 are both at $sh_ver"
+        else doctor_warn "pep-tools.sh is $sh_ver but pep-tools.ps1 is $ps_ver — run 'update-tools' (either shell)"; fi
+    elif [ -n "$sh_ver" ]; then
+        doctor_info "only pep-tools.sh is in this repo (fine; 'update-tools --add-ps1' adds the PowerShell version)"
+    elif [ -n "$ps_ver" ]; then
+        doctor_info "only pep-tools.ps1 is in this repo (fine; '.\tools\pep-tools.ps1 update-tools --add-sh' adds the bash version)"
+    fi
+
+    # 5. Commit hook
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        local hook_src="tools/git-hooks/commit-msg" hook_dest
+        hook_dest=$(git rev-parse --git-path hooks/commit-msg 2>/dev/null)
+        if [ ! -f "$hook_src" ]; then
+            doctor_info "no $hook_src in this repo (commit-msg hook not in use)"
+        elif [ ! -f "$hook_dest" ]; then
+            doctor_warn "the commit-msg hook isn't installed — run 'update-hooks'"
+        elif ! cmp -s "$hook_src" "$hook_dest"; then
+            doctor_warn "the installed commit-msg hook differs from $hook_src — run 'update-hooks'"
+        else
+            doctor_ok "commit-msg hook is installed and current"
+        fi
+    fi
+
+    # 6. Version against the framework's main branch
+    if ! $_DOC_OFFLINE && [ -n "$sh_ver" ]; then
+        local latest
+        latest=$(curl -fsS --max-time 5 "${PEP_DOCTOR_LATEST_URL:-$DOCTOR_LATEST_URL}" 2>/dev/null | sed -n '1,10s/^# Version: *//p' | head -1 || true)
+        if [ -z "$latest" ]; then
+            doctor_info "couldn't check the framework's latest version (offline?)"
+        elif [ "$latest" = "$sh_ver" ]; then
+            doctor_ok "tools are at the framework's current version ($sh_ver)"
+        else
+            doctor_warn "this repo has tools $sh_ver; the framework is at $latest — run 'update-tools'"
+        fi
+    fi
+
+    if ! $_DOC_QUIET || [ $((_DOC_WARN + _DOC_FAIL)) -gt 0 ]; then
+        echo "doctor: $_DOC_OK ok, $_DOC_INFO info, $_DOC_WARN warn, $_DOC_FAIL fail"
+    fi
+    [ "$_DOC_FAIL" -eq 0 ]
+}
+
 # Show help
 show_help() {
     local file_prefix
@@ -2179,6 +2364,8 @@ ${GREEN}Framework commands:${NC}
                                                framework's git repo if none is configured), and
                                                pep-tools.ps1 too if this repo has it
   ${YELLOW}update-templates${NC} [--source <path|git>]  Update PEP/BLOG templates from source (same default)
+  ${YELLOW}doctor${NC} [--offline] [--quiet]            Check .peprc/.peprc.local, the source, both scripts and
+                                               the hook; exit 1 on a FAIL (update-tools runs it quietly)
   ${YELLOW}update-hooks${NC} [--source <path|git>]      Refresh tools/git-hooks/commit-msg from source AND
                                                reinstall it into .git/hooks (update-tools does this too)
   ${YELLOW}help${NC}                                    Show this help message
@@ -2293,6 +2480,10 @@ main() {
         "update-hooks")
             shift
             update_hooks "$@"
+            ;;
+        "doctor")
+            shift
+            doctor "$@"
             ;;
         "help"|"-h"|"--help")
             show_help
