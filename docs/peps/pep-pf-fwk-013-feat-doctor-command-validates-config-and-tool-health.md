@@ -73,6 +73,7 @@ with the fix. Exit 1 if anything FAILs; a WARN is exit 0.
 ### Phase 2: Roll-out
 
 - After the work repos are updated, run `doctor` once in each; fix what it reports.
+- Done 2026-11-03: all six work repos updated (stated by Timo). `doctor` reported `.peprc.local` tracked by git in the work repos; Timo fixed every one (stated by Timo; some were fixed before `doctor` was run on them, so not every repo's report was seen).
 
 ## Testing Strategy
 
@@ -105,3 +106,4 @@ with the fix. Exit 1 if anything FAILs; a WARN is exit 0.
 |---------|------|--------|---------|
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
 | 1.0 | 2026-11-03 | Timo Vlot | Implemented in both scripts; 113/113 tests |
+| 1.1 | 2026-11-03 | Timo Vlot (with Claude) | Roll-out done: all six work repos updated (stated by Timo). First real-world catch: `.peprc.local` committed in the work repos (personal settings only, no secrets in the one inspected); all untracked (stated by Timo) |
