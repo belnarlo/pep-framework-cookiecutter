@@ -1723,6 +1723,25 @@ clone_git_source() {
     fi
 }
 
+# Rewrite a raw-file PEP_FRAMEWORK_SOURCE to its git URL in whichever config
+# file holds it (.peprc.local, .peprc), so the next run starts from a good
+# value (PEP-PF-FWK-012). $1 = the old raw URL, $2 = the git URL.
+rewrite_raw_source_config() {
+    local old="$1" new="$2" f
+    for f in "${CONFIG_FILE}.local" "$CONFIG_FILE"; do
+        [ -f "$f" ] || continue
+        if grep '^PEP_FRAMEWORK_SOURCE=' "$f" | grep -qF "$old"; then
+            sed -i.bak "s|^PEP_FRAMEWORK_SOURCE=.*\$|PEP_FRAMEWORK_SOURCE=\"$new\"|" "$f"
+            rm -f "${f}.bak"
+            if [ "$f" = "$CONFIG_FILE" ]; then
+                log "INFO" "Rewrote PEP_FRAMEWORK_SOURCE in $f to the git URL — shared file, commit it"
+            else
+                log "INFO" "Rewrote PEP_FRAMEWORK_SOURCE in $f to the git URL"
+            fi
+        fi
+    done
+}
+
 # Update pep-tools.sh from a source path, git URL, or raw-file URL
 update_tools() {
     local source=""
@@ -1745,6 +1764,20 @@ update_tools() {
     if [ -z "$source" ]; then
         source="$DEFAULT_TEMPLATE_REPO"
         log "INFO" "No source specified — defaulting to $source"
+    fi
+
+    # A raw-file URL (saved by an older update-tools) can't supply the whole
+    # repo. When it names a GitHub repo, use that repo's git URL instead and
+    # fix the saved value afterwards (PEP-PF-FWK-012).
+    local raw_source=""
+    if ! is_git_source "$source" && echo "$source" | grep -qE '^https?://'; then
+        local derived_src
+        derived_src=$(derive_git_url_from_raw "$source")
+        if [ -n "$derived_src" ]; then
+            log "INFO" "Source is a raw-file URL; using its git repo instead: $derived_src"
+            raw_source="$source"
+            source="$derived_src"
+        fi
     fi
 
     local dest="tools/pep-tools.sh"
@@ -1816,6 +1849,7 @@ update_tools() {
         fi
         log "INFO" "Saved PEP_FRAMEWORK_SOURCE to $local_config"
     fi
+    [ -z "$raw_source" ] || rewrite_raw_source_config "$raw_source" "$source"
 
     # Keep the PowerShell copy in step (PEP-PF-FWK-009). A failure there has
     # already been rolled back; pep-tools.sh itself stays updated.
@@ -1838,7 +1872,7 @@ sync_sibling_tools() {
     if [ ! -f "$dest" ]; then
         $add || return 0
         if [ -z "$src_dir" ] || [ ! -f "$src_dir/pep-tools.ps1" ]; then
-            log "ERROR" "--add-ps1 needs a path or git source that contains pep-tools.ps1"
+            log "ERROR" "--add-ps1 needs a git or local-path source that contains pep-tools.ps1 (a single-file URL has none; pass --source <git url>)"
             return 1
         fi
         cp "$src_dir/pep-tools.ps1" "$dest"

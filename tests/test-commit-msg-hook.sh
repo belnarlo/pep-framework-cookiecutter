@@ -284,6 +284,44 @@ expect_failure "[$CLI] update-tools $addflag reports a sibling that doesn't pars
 expect_success "[$CLI] ...and doesn't leave $sib behind" \
     test ! -e "tools/$sib"
 
+# A raw-file PEP_FRAMEWORK_SOURCE is upgraded to its git repo (PEP-PF-FWK-012).
+# The GitHub URL is redirected to a local repo, so no network is used.
+echo "# --- raw-URL source via $CLI"
+ORIGIN="$WORK/origin-$CLI"
+mkdir -p "$ORIGIN/{{cookiecutter.project_slug}}"
+cp -R "$SRC_TOOLS" "$ORIGIN/{{cookiecutter.project_slug}}/tools"
+(cd "$ORIGIN" && git init -q -b main . && git add -A && git commit -q -m origin)
+RAW="https://raw.githubusercontent.com/belnarlo/pep-framework-cookiecutter/main/%7B%7Bcookiecutter.project_slug%7D%7D/tools/pep-tools.sh"
+GITURL="https://github.com/belnarlo/pep-framework-cookiecutter.git"
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.$ORIGIN.insteadOf" GIT_CONFIG_VALUE_0="$GITURL"
+
+new_repo "$WORK/raw-shared-$CLI"
+cp "${TOOLS_DIR}/$own" tools/
+printf 'PEP_FRAMEWORK_SOURCE="%s"\n' "$RAW" >> .peprc
+pep update-tools $addflag >/dev/null 2>&1
+expect_success "[$CLI] update-tools $addflag works when .peprc holds a raw-file URL" \
+    cmp -s "$SRC_TOOLS/$sib" "tools/$sib"
+expect_success "[$CLI] ...and rewrites that .peprc line to the git URL" \
+    grep -qxF "PEP_FRAMEWORK_SOURCE=\"$GITURL\"" .peprc
+
+new_repo "$WORK/raw-local-$CLI"
+cp "${TOOLS_DIR}/$own" tools/
+printf 'PEP_FRAMEWORK_SOURCE="%s"\n' "$RAW" > .peprc.local
+pep update-tools >/dev/null 2>&1
+expect_success "[$CLI] a raw-file URL in .peprc.local is rewritten to the git URL" \
+    grep -qxF "PEP_FRAMEWORK_SOURCE=\"$GITURL\"" .peprc.local
+expect_success "[$CLI] ...and nothing is added to .peprc" \
+    bash -c '! grep -q PEP_FRAMEWORK_SOURCE .peprc'
+
+new_repo "$WORK/raw-other-$CLI"
+cp "${TOOLS_DIR}/$own" tools/
+printf 'PEP_FRAMEWORK_SOURCE="https://example.invalid/x/%s"\n' "$own" >> .peprc
+expect_failure "[$CLI] $addflag with a raw URL that isn't a GitHub repo is refused" \
+    pep update-tools $addflag
+expect_success "[$CLI] ...and no $sib appears" \
+    test ! -e "tools/$sib"
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
 # update-templates keeps the repo's ai-block choice (or a customised template)
 echo "# --- update-templates via $CLI"
 new_repo "$WORK/templates-$CLI"

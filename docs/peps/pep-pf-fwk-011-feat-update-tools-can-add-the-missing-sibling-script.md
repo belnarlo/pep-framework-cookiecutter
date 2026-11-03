@@ -33,7 +33,8 @@ way to get it.
 - Opt-in only. Without the flag, behaviour is exactly as PEP-PF-FWK-009: a missing
   sibling is never added.
 - Needs a git or local-path source that contains the sibling. A raw-file URL source
-  errors, since it can't supply one.
+  can't supply one; this was first specified as an error, which was wrong for the
+  existing work repos. PEP-PF-FWK-012 converts such a source to its git URL.
 - Parse-check the new file as in 009 (`pwsh` / `bash -n` when available). If it
   doesn't parse, remove it again and report an error; the main script stays updated.
 - The new file is left unstaged; the log says to `git add` it.
@@ -91,3 +92,4 @@ way to get it.
 |---------|------|--------|---------|
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
 | 1.0 | 2026-11-03 | Timo Vlot | Implemented in both scripts; 8 new test assertions (63/63) |
+| 1.1 | 2026-11-03 | Timo Vlot | Raw-URL source no longer an error: see PEP-PF-FWK-012 |

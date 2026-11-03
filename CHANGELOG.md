@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed (identical in `pep-tools.sh` and `pep-tools.ps1`)
+
+- `update-tools` with a raw-file `PEP_FRAMEWORK_SOURCE` (PEP-PF-FWK-012): the
+  value, written by older versions, made `--add-ps1` / `--add-sh` fail because
+  a single file has no sibling. `update-tools` now uses the GitHub repo's git
+  URL for the run and rewrites the saved value in `.peprc.local` / `.peprc`
+  (commit `.peprc` if it changed). Non-GitHub raw URLs behave as before.
+
 ### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
 
 - `update-tools --add-ps1` (bash) / `--add-sh` (PowerShell) (PEP-PF-FWK-011):

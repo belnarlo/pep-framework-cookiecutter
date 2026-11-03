@@ -1629,7 +1629,7 @@ function Sync-PepSiblingTools {
     if (-not (Test-Path $dest)) {
         if (-not $Add) { return $true }
         if (-not $SourceFile -or -not (Test-Path $SourceFile)) {
-            Write-PepLog ERROR "--add-sh needs a path or git source that contains pep-tools.sh"
+            Write-PepLog ERROR "--add-sh needs a git or local-path source that contains pep-tools.sh (a single-file URL has none; pass --source <git url>)"
             return $false
         }
         Copy-Item $SourceFile $dest -Force
@@ -1691,6 +1691,33 @@ function Sync-PepSiblingTools {
 }
 
 # ----------------------------------------------------------------------------
+# Rewrite a raw-file PEP_FRAMEWORK_SOURCE to its git URL in whichever config
+# file holds it (.peprc.local, .peprc), so the next run starts from a good
+# value (PEP-PF-FWK-012).
+# ----------------------------------------------------------------------------
+function Update-PepRawSourceConfig {
+    param([string]$Old, [string]$New)
+    foreach ($f in @("$($script:CONFIG_FILE).local", $script:CONFIG_FILE)) {
+        if (-not (Test-Path $f)) { continue }
+        $changed = $false
+        $out = foreach ($l in (Get-Content $f)) {
+            if ($l -match '^PEP_FRAMEWORK_SOURCE=' -and $l.Contains($Old)) {
+                $changed = $true
+                "PEP_FRAMEWORK_SOURCE=`"$New`""
+            } else { $l }
+        }
+        if ($changed) {
+            Set-Content -Path $f -Value $out
+            if ($f -eq $script:CONFIG_FILE) {
+                Write-PepLog INFO "Rewrote PEP_FRAMEWORK_SOURCE in $f to the git URL — shared file, commit it"
+            } else {
+                Write-PepLog INFO "Rewrote PEP_FRAMEWORK_SOURCE in $f to the git URL"
+            }
+        }
+    }
+}
+
+# ----------------------------------------------------------------------------
 # Update pep-tools.ps1 from a source path, git URL, or raw-file URL
 # ----------------------------------------------------------------------------
 function Update-PepTools {
@@ -1712,6 +1739,19 @@ function Update-PepTools {
     if (-not $source) {
         $source = $script:DEFAULT_TEMPLATE_REPO
         Write-PepLog INFO "No source specified — defaulting to $source"
+    }
+
+    # A raw-file URL (saved by an older update-tools) can't supply the whole
+    # repo. When it names a GitHub repo, use that repo's git URL instead and
+    # fix the saved value afterwards (PEP-PF-FWK-012).
+    $rawSource = $null
+    if (-not (Test-GitSource $source) -and $source -match '^https?://') {
+        $derivedSrc = Get-GitUrlFromRawUrl $source
+        if ($derivedSrc) {
+            Write-PepLog INFO "Source is a raw-file URL; using its git repo instead: $derivedSrc"
+            $rawSource = $source
+            $source = $derivedSrc
+        }
     }
 
     $dest = "tools/pep-tools.ps1"
@@ -1795,6 +1835,7 @@ function Update-PepTools {
         }
         Write-PepLog INFO "Saved PEP_FRAMEWORK_SOURCE to $localConfig"
     }
+    if ($rawSource) { Update-PepRawSourceConfig -Old $rawSource -New $source }
 
     # Keep the bash copy in step (PEP-PF-FWK-009). A failure there has already
     # been rolled back; pep-tools.ps1 itself stays updated.
