@@ -71,6 +71,7 @@ it is the normal state of the existing work repos.
 - Work repos: run `update-tools` (the old script can't do this yet), then
   `update-tools --add-ps1`; commit the rewritten `.peprc` in the same PR.
   `doctor` (PEP-PF-FWK-013) reports any repo still holding a raw URL.
+- Done 2026-11-03: all six work repos updated; the raw-URL source was rewritten in each (stated by Timo).
 
 ## Testing Strategy
 
@@ -103,3 +104,4 @@ it is the normal state of the existing work repos.
 |---------|------|--------|---------|
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
 | 1.0 | 2026-11-03 | Timo Vlot | Implemented in both scripts; 6 new test assertions (75/75) |
+| 1.1 | 2026-11-03 | Timo Vlot (with Claude) | Roll-out done: all six work repos updated and the raw-URL `PEP_FRAMEWORK_SOURCE` rewritten (stated by Timo) |
