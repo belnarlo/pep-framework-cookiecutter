@@ -68,7 +68,7 @@ with the fix. Exit 1 if anything FAILs; a WARN is exit 0.
 ### Phase 1: Both scripts and tests
 
 - `doctor`, help text, the `update-tools` hook, CHANGELOG, tests.
-- Built 2026-11-03 on Timo's personal Mac by Claude Code, with PEP-PF-FWK-011 and 012.
+- Built 2026-11-03 on Timo's personal Mac by Claude Code, with PEP-PF-FWK-011 and 012. Released in 2.3.
 
 ### Phase 2: Roll-out
 

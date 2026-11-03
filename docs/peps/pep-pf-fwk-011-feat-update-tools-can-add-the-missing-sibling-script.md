@@ -57,7 +57,7 @@ way to get it.
 ### Phase 1: Both scripts and tests
 
 - Flag, create path, help text, CHANGELOG, tests in `tests/test-commit-msg-hook.sh`.
-- Built 2026-11-03 on Timo's personal Mac by Claude Code.
+- Built 2026-11-03 on Timo's personal Mac by Claude Code. Released in 2.3.
 
 ### Phase 2: Roll-out
 

@@ -216,11 +216,21 @@ systemctl enable {{ ns.pep_id|lower }}-automation.timer
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
 ./tools/pep-tools.sh update-tools                 # Update pep-tools.sh, and pep-tools.ps1 if present (defaults to the framework's git repo)
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default; keeps the AI-block choice)
+./tools/pep-tools.sh update-tools --add-ps1      # ...and add pep-tools.ps1 if this repo only has the .sh (PowerShell: --add-sh)
 ./tools/pep-tools.sh update-hooks                 # Refresh the commit-msg hook and reinstall it
+./tools/pep-tools.sh doctor [--offline] [--quiet] # Check config, the framework source, both scripts and the hook
 ./tools/pep-tools.sh help                         # Full help
 ```
 
 On Windows, use `tools/pep-tools.ps1` with the same commands and arguments (e.g. `.\tools\pep-tools.ps1 status --since 2026-07-01`).
+
+### Checking your setup (`doctor`)
+
+`doctor` reports, with the fix for each: a bad or raw-file `PEP_FRAMEWORK_SOURCE`, unknown or
+mistyped settings, secrets in `.peprc`, `.peprc.local` tracked by git or not ignored, the two
+scripts at different versions, a missing or changed commit hook, and a newer framework version.
+It exits 1 only on a FAIL. `--offline` skips the network checks and `--quiet` prints only
+problems; `update-tools` runs it quietly after every update.
 
 ---
 

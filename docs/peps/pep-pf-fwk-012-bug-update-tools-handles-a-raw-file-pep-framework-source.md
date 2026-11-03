@@ -64,7 +64,7 @@ it is the normal state of the existing work repos.
 ### Phase 1: Both scripts and tests
 
 - Conversion and rewrite in `update_tools` and `Update-PepTools`; tests; CHANGELOG.
-- Built 2026-11-03 on Timo's personal Mac by Claude Code, with PEP-PF-FWK-011 and 013.
+- Built 2026-11-03 on Timo's personal Mac by Claude Code, with PEP-PF-FWK-011 and 013. Released in 2.3.
 
 ### Phase 2: Roll-out
 

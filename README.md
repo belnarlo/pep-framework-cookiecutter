@@ -154,7 +154,9 @@ your-new-project/
 ./tools/pep-tools.sh strip-ai-block [--dry-run]   # Remove the AI block from existing PEPs
 ./tools/pep-tools.sh update-tools                 # Update pep-tools.sh, and pep-tools.ps1 if present (defaults to this repo's git URL)
 ./tools/pep-tools.sh update-templates             # Update PEP/BLOG templates (same default; keeps the AI-block choice)
+./tools/pep-tools.sh update-tools --add-ps1      # ...and add pep-tools.ps1 to a repo that only has the .sh (PowerShell: --add-sh)
 ./tools/pep-tools.sh update-hooks                 # Refresh the commit-msg hook and reinstall it
+./tools/pep-tools.sh doctor [--offline] [--quiet] # Check .peprc/.peprc.local, the source, both scripts, the hook
 ./tools/pep-tools.sh help                         # Full help with current repo's ID format
 ```
 
@@ -185,18 +187,33 @@ cp -r ../temp/{docs,tools,.peprc,.peprc.local.example,.gitignore} .
 
 ## Upgrading an Existing PEP Framework Installation
 
-### `ask` and one-step updates (2.3)
+### `ask`, one-step updates, `--add-ps1` and `doctor` (2.3)
 
 ```bash
 ./tools/pep-tools.sh update-tools
+./tools/pep-tools.sh update-tools --add-ps1     # only if the repo has no pep-tools.ps1
 ./tools/pep-tools.sh update-templates
+./tools/pep-tools.sh doctor
 ```
 
 From 2.3, `update-tools` in either script also refreshes the other one when the
 repo has it, so one run keeps `pep-tools.sh` and `pep-tools.ps1` in step. Repos
 still on 2.2 need one extra run of the other script this time
 (`pwsh tools/pep-tools.ps1 update-tools`), because the 2.2 script doesn't know
-how. New command: `ask <term>`. Details in [CHANGELOG.md](CHANGELOG.md).
+how. New commands: `ask <term>` and `doctor`.
+
+- `update-tools --add-ps1` (PowerShell: `--add-sh`) creates the sibling script in a repo
+  that only has one. Without the flag a missing sibling is never added.
+- A `PEP_FRAMEWORK_SOURCE` saved as a raw-file URL by an older version is turned into the
+  repo's git URL for the run, and the saved line in `.peprc.local` or `.peprc` is
+  rewritten. Commit `.peprc` if it changed: it is shared.
+- `doctor` reports a bad or raw-file source, unknown or mistyped settings, secrets in
+  `.peprc`, a tracked or un-ignored `.peprc.local` (fix: `git rm --cached .peprc.local`
+  plus a `.gitignore` entry), mismatched script versions, a missing or changed commit
+  hook, and a newer framework version. It exits 1 only on a FAIL; `update-tools` runs it
+  quietly afterwards.
+
+Details in [CHANGELOG.md](CHANGELOG.md).
 
 ### Hook fix for merge commits (2.1)
 
@@ -315,8 +332,9 @@ PEP_FRAMEWORK_SOURCE="/path/to/pep-framework-cookiecutter/{{cookiecutter.project
 ```
 
 `PEP_FRAMEWORK_SOURCE` is used by `update-tools` and `update-templates` when no `--source` flag is
-given. It accepts a local path, a git URL ending in `.git` (cloned automatically — `update-tools`
-also accepts a raw-file URL for a single `pep-tools.sh`), or an SSH remote (`git@host:org/repo.git`).
+given. It accepts a local path, a git URL ending in `.git` (cloned automatically), or an SSH remote
+(`git@host:org/repo.git`). A raw-file GitHub URL, as older versions saved, is converted to the repo's
+git URL and the saved value rewritten by `update-tools`; `doctor` flags any that is left.
 If it's unset entirely, both commands fall back to this project's own git repository, so they work
 on a fresh machine with no configuration at all.
 

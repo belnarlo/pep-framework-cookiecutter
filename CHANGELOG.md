@@ -1,31 +1,18 @@
 # Changelog
 
-## Unreleased
-
-### Fixed (identical in `pep-tools.sh` and `pep-tools.ps1`)
-
-- `update-tools` with a raw-file `PEP_FRAMEWORK_SOURCE` (PEP-PF-FWK-012): the
-  value, written by older versions, made `--add-ps1` / `--add-sh` fail because
-  a single file has no sibling. `update-tools` now uses the GitHub repo's git
-  URL for the run and rewrites the saved value in `.peprc.local` / `.peprc`
-  (commit `.peprc` if it changed). Non-GitHub raw URLs behave as before.
-
-### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
-
-- `doctor [--offline] [--quiet]` (PEP-PF-FWK-013): checks `.peprc` and
-  `.peprc.local` (framework source, unknown settings, secrets, gitignore),
-  that both scripts match, the commit hook, and the version against the
-  framework's `main`. Exit 1 on a FAIL. `update-tools` now runs it quietly
-  afterwards and shows only problems.
-- `update-tools --add-ps1` (bash) / `--add-sh` (PowerShell) (PEP-PF-FWK-011):
-  also create the sibling script in a repo that only has one. Opt-in; without
-  the flag a missing sibling is still never added. Needs a git or local-path
-  source; the new file is parse-checked and left unstaged.
-
 ## 2.3 — 2026-11-03
 
 ### Added (identical in `pep-tools.sh` and `pep-tools.ps1`)
 
+- `doctor [--offline] [--quiet]` (PEP-PF-FWK-013): checks `.peprc` and
+  `.peprc.local` (framework source, unknown or mistyped settings, secrets,
+  gitignore), that both scripts match, the commit hook, and the version
+  against the framework's `main`, each with the fix. Exit 1 on a FAIL.
+  `update-tools` runs it quietly afterwards and shows only problems.
+- `update-tools --add-ps1` (bash) / `--add-sh` (PowerShell) (PEP-PF-FWK-011):
+  also create the sibling script in a repo that only has one. Opt-in; without
+  the flag a missing sibling is still never added. Needs a git or local-path
+  source; the new file is parse-checked and left unstaged (`git add` it).
 - `ask <term>` (PEP-PF-FWK-008): which PEP is about a term? It searches the
   PEPs case-insensitively and prints, per matching PEP, its ID, title and up to
   five matching lines. With `PEP_ASK_URL` set, it sends those lines (never
@@ -41,6 +28,12 @@
 
 ### Fixed
 
+- `update-tools` with a raw-file `PEP_FRAMEWORK_SOURCE` (PEP-PF-FWK-012): older
+  versions saved the source that way, which made `--add-ps1` / `--add-sh` fail
+  because a single file has no sibling. `update-tools` now uses the GitHub
+  repo's git URL for the run and rewrites the saved value in `.peprc.local` /
+  `.peprc` (commit `.peprc` if it changed: it is shared). Non-GitHub raw URLs
+  behave as before.
 - `update-tools` keeps both scripts in step (PEP-PF-FWK-009). Each script used
   to replace only itself, so a repo updated with bash kept an old
   `pep-tools.ps1` (found in two homelab repos, 51 lines behind). Now, when the
@@ -48,15 +41,23 @@
   first, parse-checked (`pwsh` or `bash -n`, when installed; otherwise it says
   it wasn't checked) and restored on failure. A failed sibling update exits
   non-zero but leaves the main script updated. A repo without the other script
-  doesn't get one. Raw-file URL sources print a warning instead.
+  doesn't get one unless asked with `--add-ps1` / `--add-sh`. Raw-file URL
+  sources on non-GitHub hosts print a warning instead.
 - Script version headers now say 2.3 (they had stayed at 2.1 through 2.2).
 
 ### Getting it in an existing repo
 
 ```bash
 ./tools/pep-tools.sh update-tools
+./tools/pep-tools.sh update-tools --add-ps1   # only if the repo has no pep-tools.ps1
 ./tools/pep-tools.sh update-templates
+./tools/pep-tools.sh doctor
 ```
+
+Commit everything that changed (`git status`), including a rewritten `.peprc`
+line. Repos that already ran the first 2.3 release only need
+`update-tools` again to pick up `doctor` and the flags; the version number is
+the same, so `doctor` can't tell the difference.
 
 Repos on 2.2 with both scripts: also run `pwsh tools/pep-tools.ps1 update-tools`
 once (a 2.2 script doesn't know about the sibling yet). From 2.3 on, one run
