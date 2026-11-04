@@ -7,7 +7,7 @@
 **Type:** Feature  
 **Priority:** Low  
 **Created:** 2026-11-03  
-**Updated:** 2026-11-03  
+**Updated:** 2026-11-04  
 **Supersedes:** N/A  
 **Superseded-By:** N/A  
 
@@ -23,6 +23,16 @@ matches and the model only reads them. So `ask dashboard` misses a PEP that says
 phrase is searched. Timo wants synonyms and plain questions to work (2026-11-03).
 Not urgent: the core-12 tests on the Alienware and the work question set decide first
 whether the model step in `ask` earns its keep at all.
+
+### Evidence from the work test run (2026-11-03)
+
+Work question set on the `local` model: 6 repos, 184 PEPs. Summary in the vault: `00-inbox/work-pep-local-llm-test-summary-2026-11-04.md`. Work PEP names and IDs are kept out of this repo, so the examples are generic.
+
+- Spelling variant: a PEP titled with two words ("Foo Bar") is missed by `ask FooBar`, which prints "No PEP mentions" (score 0). The same term typed with the space works (score 2). The editor agent (Zed) fails the same way.
+- Synonym / plain question: a question that shares no keyword with the PEP cannot run through `ask` at all. The editor agent scored 0 and invented a plan.
+- Status question: "which are Rejected or Superseded" scored 0 when the model chose its own search (the regex flooded the 8k window). The equivalent question with the PEP list pasted in scored 2.
+- Keyword tests through `ask`: 9 of 12. It named only IDs it was shown and never invented one. On the 4 tests where grep matched several PEPs, the model narrowed the list each time and kept the real answer each time, but listed one PEP that only mentions the word in 2 of the 4.
+- Implication: the model step earns its keep (it narrows and formats without inventing), so the open question is retrieval, not the model. The one-line-per-PEP index should cover the status and synonym cases, because pasted input beat a model-chosen search. A variant fallback (retry with spaces or hyphens added or removed) is cheap and needs no model.
 
 ## Specification
 
@@ -89,10 +99,12 @@ should be, so a miss can be explained).
 ## References
 
 - PEP-PF-FWK-008 (`ask`), PEP-PF-FWK-006 (parity)
-- Vault: `20-areas/ai/local-llm-test-set.md`, `20-areas/ai/zed-local-repo-lookups.md`
+- Vault: `20-areas/ai/local-llm-test-set.md`, `20-areas/ai/zed-local-repo-lookups.md`, `00-inbox/work-pep-local-llm-test-summary-2026-11-04.md`
+- PEP-PF-FWK-014 (doctor lints PEP files; same test run)
 
 ## Revision History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 0.1 | 2026-11-03 | Timo Vlot | Initial draft |
+| 0.2 | 2026-11-04 | Timo Vlot (with Claude) | Added evidence from the work test run to Motivation |
